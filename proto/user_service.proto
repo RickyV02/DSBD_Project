@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package user_service;
+
+service UserService {
+  rpc VerifyUser(VerifyUserRequest) returns (VerifyUserResponse);
+
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+}
+
+message VerifyUserRequest {
+  string email = 1;
+}
+
+message VerifyUserResponse {
+  bool exists = 1;
+  string message = 2;
+}
+
+message GetUserRequest {
+  string email = 1;
+}
+
+message GetUserResponse {
+  string email = 1;
+  string nome = 2;
+  string cognome = 3;
+  string codice_fiscale = 4;
+  bool exists = 5;
+  string iban = 6;
+}

@@ -1,0 +1,111 @@
+version: "3.8"
+
+services:
+    # Database for User Manager
+    user-db:
+        image: mysql:8.0
+        container_name: user-db
+        environment:
+            MYSQL_DATABASE: ${MYSQL_DATABASE_USER}
+            MYSQL_USER: ${MYSQL_USER}
+            MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+            MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+        ports:
+            - "${USER_DB_PORT}:3306"
+        volumes:
+            - user-db-data:/var/lib/mysql
+        networks:
+            - user-net
+        healthcheck:
+            test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+    # Database for Data Collector
+    data-db:
+        image: mysql:8.0
+        container_name: data-db
+        environment:
+            MYSQL_DATABASE: ${MYSQL_DATABASE_DATA}
+            MYSQL_USER: ${MYSQL_USER}
+            MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+            MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+        ports:
+            - "${DATA_DB_PORT}:3306"
+        volumes:
+            - data-db-data:/var/lib/mysql
+        networks:
+            - data-net
+        healthcheck:
+            test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+    # User Manager Microservice
+    user-manager:
+        build:
+            context: .
+            dockerfile: user-manager/Dockerfile
+        container_name: user-manager
+        environment:
+            DB_HOST: ${DB_HOST}
+            DB_PORT: ${DB_PORT}
+            DB_NAME: ${MYSQL_DATABASE_USER}
+            DB_USER: ${MYSQL_USER}
+            DB_PASSWORD: ${MYSQL_PASSWORD}
+            ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+        ports:
+            - "${USER_MANAGER_PORT}:5000"
+            - "${USER_MANAGER_GRPC_PORT}:50051"
+        volumes:
+            - ./proto:/app/proto
+        depends_on:
+            user-db:
+                condition: service_healthy
+        networks:
+            - user-net
+            - shared-net
+        restart: unless-stopped
+
+    # Data Collector Microservice
+    data-collector:
+        build:
+            context: .
+            dockerfile: data-collector/Dockerfile
+        container_name: data-collector
+        environment:
+            DATA_DB_HOST: ${DATA_DB_HOST}
+            DATA_DB_PORT: ${DATA_DB_PORT}
+            DATA_DB_NAME: ${MYSQL_DATABASE_DATA}
+            DATA_DB_USER: ${MYSQL_USER}
+            DATA_DB_PASSWORD: ${MYSQL_PASSWORD}
+            USER_MANAGER_HOST: ${USER_MANAGER_HOST}
+            USER_MANAGER_GRPC_PORT: ${USER_MANAGER_GRPC_PORT}
+            COLLECTION_INTERVAL_HOURS: ${COLLECTION_INTERVAL_HOURS}
+            CLIENT_ID: ${CLIENT_ID}
+            CLIENT_SECRET: ${CLIENT_SECRET}
+        ports:
+            - "${DATA_COLLECTOR_PORT}:5001"
+        volumes:
+            - ./proto:/app/proto
+        depends_on:
+            - data-db
+            - user-manager
+        networks:
+            - data-net
+            - shared-net
+        restart: unless-stopped
+
+networks:
+    user-net:
+        driver: bridge
+    data-net:
+        driver: bridge
+    shared-net:
+        driver: bridge
+
+volumes:
+    user-db-data:
+    data-db-data:
