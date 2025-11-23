@@ -79,7 +79,10 @@ def get_user_interests(email):
         exists, message = user_manager_client.verify_user(email)
 
         if not exists:
-            return jsonify({"error": "Utente non trovato"}), 404
+            return jsonify({
+                "error": "Utente non trovato",
+                "message": message
+            }), 404
 
         interests = UserInterest.query.filter_by(user_email=email).order_by(UserInterest.created_at.desc()).all()
 
@@ -95,13 +98,20 @@ def get_user_interests(email):
 @app.route('/interests', methods=['DELETE'])
 def remove_interest():
     try:
-        data = request.json
+        email = request.args.get('email')
+        airport_icao = request.args.get('airport_icao')
 
-        if 'email' not in data or 'airport_icao' not in data:
-            return jsonify({"error": "Campi 'email' e 'airport_icao' obbligatori"}), 400
+        if not email or not airport_icao:
+            return jsonify({"error": "Campi 'email' e 'airport_icao' obbligatori nell'URL"}), 400
 
-        email = data['email']
-        airport_icao = data['airport_icao'].upper()
+        airport_icao = airport_icao.upper()
+
+        exists, message = user_manager_client.verify_user(email)
+        if not exists:
+            return jsonify({
+                "error": "Utente non trovato",
+                "message": message
+            }), 404
 
         interest = UserInterest.query.filter_by(user_email=email, airport_icao=airport_icao).first()
 
@@ -118,6 +128,7 @@ def remove_interest():
         }), 200
 
     except Exception as e:
+        db.session.rollback()
         return jsonify({"error": f"Errore: {str(e)}"}), 500
 
 @app.route('/flights/<airport_icao>', methods=['GET'])
@@ -128,9 +139,12 @@ def get_flights(airport_icao):
         if not email:
             return jsonify({"error": "Parametro 'email' obbligatorio"}), 400
 
-        exists, _ = user_manager_client.verify_user(email)
+        exists, message = user_manager_client.verify_user(email)
         if not exists:
-            return jsonify({"error": "Utente non trovato"}), 404
+            return jsonify({
+                "error": "Utente non trovato",
+                "message": message
+            }), 404
 
         interest = UserInterest.query.filter_by(user_email=email, airport_icao=airport_icao.upper()).first()
 
@@ -139,10 +153,15 @@ def get_flights(airport_icao):
                 "error": "Aeroporto non tra gli interessi dell'utente"
             }), 403
 
-        flight_type = request.args.get('type')  # 'departure', 'arrival', or None
-        limit = int(request.args.get('limit', 100))
+        flight_type = request.args.get('type') # Could be None, or 'departure' or 'arrival' (even a string not valid, like "foo")
+
+        if flight_type and flight_type not in ['departure', 'arrival']:
+            return jsonify({"error": "Il parametro type, se presente, deve essere 'departure' o 'arrival'"}), 400
+
+        limit = int(request.args.get('limit', 100)) # if not provided, default to 100
 
         query = FlightData.query.filter_by(airport_icao=airport_icao.upper())
+
         if flight_type:
             query = query.filter_by(flight_type=flight_type)
 
@@ -161,40 +180,56 @@ def get_flights(airport_icao):
 def get_latest_flight(airport_icao):
     try:
         email = request.args.get('email')
-        flight_type = request.args.get('type', 'departure')  # 'departure' or 'arrival'
+        flight_type = request.args.get('type') # None, 'departure', 'arrival'
 
         if not email:
             return jsonify({"error": "Parametro 'email' obbligatorio"}), 400
 
-        if flight_type not in ['departure', 'arrival']:
-            return jsonify({"error": "Tipo deve essere 'departure' o 'arrival'"}), 400
+        if flight_type and flight_type not in ['departure', 'arrival']:
+            return jsonify({"error": "Il parametro type, se presente, deve essere 'departure' o 'arrival'"}), 400
 
-        exists, _ = user_manager_client.verify_user(email)
+        exists, message = user_manager_client.verify_user(email)
         if not exists:
-            return jsonify({"error": "Utente non trovato"}), 404
+            return jsonify({
+                "error": "Utente non trovato",
+                "message": message
+            }), 404
 
         interest = UserInterest.query.filter_by(user_email=email, airport_icao=airport_icao.upper()).first()
-
         if not interest:
             return jsonify({"error": "Aeroporto non tra gli interessi dell'utente"}), 403
 
-        flight = FlightData.query.filter_by(
-            airport_icao=airport_icao.upper(),
-            flight_type=flight_type
-        ).order_by(FlightData.collected_at.desc()).first()
+        def fetch_latest(f_type):
+            return FlightData.query.filter_by(
+                airport_icao=airport_icao.upper(),
+                flight_type=f_type
+            ).order_by(FlightData.collected_at.desc()).first()
 
-        if not flight:
-            return jsonify({
-                "message": "Nessun volo trovato",
-                "airport_icao": airport_icao.upper(),
-                "flight_type": flight_type
-            }), 404
+        response_data = {
+            "airport_icao": airport_icao.upper()
+        }
 
-        return jsonify({
-            "airport_icao": airport_icao.upper(),
-            "flight_type": flight_type,
-            "flight": flight.to_dict()
-        }), 200
+        if flight_type:
+            # User wants only one type (departure OR arrival)
+            flight = fetch_latest(flight_type)
+            if not flight:
+                return jsonify({"message": f"Nessun volo di tipo {flight_type} trovato"}), 404
+
+            response_data['type'] = flight_type
+            response_data['flight'] = flight.to_dict()
+
+        else:
+            # User wants both types
+            last_dep = fetch_latest('departure')
+            last_arr = fetch_latest('arrival')
+
+            if not last_dep and not last_arr:
+                return jsonify({"message": "Nessun volo trovato"}), 404
+
+            response_data['latest_departure'] = last_dep.to_dict() if last_dep else None
+            response_data['latest_arrival'] = last_arr.to_dict() if last_arr else None
+
+        return jsonify(response_data), 200
 
     except Exception as e:
         return jsonify({"error": f"Errore: {str(e)}"}), 500
@@ -204,40 +239,62 @@ def get_average_flights(airport_icao):
     try:
         email = request.args.get('email')
         days = int(request.args.get('days', 7))
-        flight_type = request.args.get('type', 'departure')  # 'departure' or 'arrival'
+
+        flight_type = request.args.get('type')
 
         if not email:
             return jsonify({"error": "Parametro 'email' obbligatorio"}), 400
 
-        if flight_type not in ['departure', 'arrival']:
-            return jsonify({"error": "Tipo deve essere 'departure' o 'arrival'"}), 400
+        if flight_type and flight_type not in ['departure', 'arrival']:
+            return jsonify({"error": "Il parametro type, se presente, deve essere 'departure' o 'arrival'"}), 400
 
-        exists, _ = user_manager_client.verify_user(email)
+        exists, message = user_manager_client.verify_user(email)
         if not exists:
-            return jsonify({"error": "Utente non trovato"}), 404
+            return jsonify({
+                "error": "Utente non trovato",
+                "message": message
+            }), 404
 
         interest = UserInterest.query.filter_by(user_email=email, airport_icao=airport_icao.upper()).first()
-
         if not interest:
             return jsonify({"error": "Aeroporto non tra gli interessi dell'utente"}), 403
 
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
-        total_flights = FlightData.query.filter(
-            FlightData.airport_icao == airport_icao.upper(),
-            FlightData.flight_type == flight_type,
-            FlightData.collected_at >= cutoff_date
-        ).count()
+        def calculate_stats(f_type):
+            count = FlightData.query.filter(
+                FlightData.airport_icao == airport_icao.upper(),
+                FlightData.flight_type == f_type,
+                FlightData.collected_at >= cutoff_date
+            ).count()
+            avg = count / days if days > 0 else 0
+            return count, round(avg, 2)
 
-        average = total_flights / days if days > 0 else 0
-
-        return jsonify({
+        response_data = {
             "airport_icao": airport_icao.upper(),
-            "flight_type": flight_type,
-            "days": days,
-            "total_flights": total_flights,
-            "daily_average": round(average, 2)
-        }), 200
+            "days_analyzed": days
+        }
+
+        if flight_type:
+            total, avg = calculate_stats(flight_type)
+            response_data[flight_type] = {
+                "total_flights": total,
+                "daily_average": avg
+            }
+        else:
+            tot_dep, avg_dep = calculate_stats('departure')
+            tot_arr, avg_arr = calculate_stats('arrival')
+
+            response_data['departure'] = {
+                "total_flights": tot_dep,
+                "daily_average": avg_dep
+            }
+            response_data['arrival'] = {
+                "total_flights": tot_arr,
+                "daily_average": avg_arr
+            }
+
+        return jsonify(response_data), 200
 
     except Exception as e:
         return jsonify({"error": f"Errore: {str(e)}"}), 500
@@ -266,7 +323,7 @@ if __name__ == '__main__':
     print(f"REST API sulla porta 5001")
     print(f"Raccolta dati ogni {collection_interval} ore")
 
-    scheduler.start(interval_hours=collection_interval)
+    scheduler.start(interval_hours=collection_interval) # Start the scheduler, it will run in background (threaded)
 
     try:
         app.run(host='0.0.0.0', port=5001, debug=False)

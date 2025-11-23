@@ -46,7 +46,9 @@ def register_user(): #We register a new user with at-most-once policy. The clien
             unique_string = f"{data['email']}-{data['codice_fiscale']}"
             request_id = hashlib.md5(unique_string.encode()).hexdigest() # If not provided, we generate a deterministic request_id based on data we know are unique
 
-        existing_user = User.query.filter_by(request_id=request_id).first() # Duplicate request check
+        # Duplicate request check
+        query = db.select(User).where(User.request_id == request_id)
+        existing_user = db.session.execute(query).scalars().first()
         if existing_user:
             return jsonify({
                 "message": "Richiesta già processata!",
@@ -119,7 +121,9 @@ def delete_user(email):
 @app.route('/users', methods=['GET'])
 def get_all_users():
     try:
-        users = User.query.all()
+        query = db.select(User)
+        users = db.session.execute(query).scalars().all()
+
         return jsonify({
             "count": len(users),
             "users": [user.to_dict() for user in users]
