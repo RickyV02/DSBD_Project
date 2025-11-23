@@ -43,18 +43,32 @@ def register_user(): #We register a new user with at-most-once policy. The clien
 
         request_id = request.headers.get('X-Request-ID') or data.get('request_id') # We can get request_id from header or body, depending on client implementation
         if not request_id:
-            unique_string = f"{data['email']}-{data['codice_fiscale']}"
-            request_id = hashlib.md5(unique_string.encode()).hexdigest() # If not provided, we generate a deterministic request_id based on data we know are unique
+            iban_value = data.get('iban', '')
+            unique_string = f"{data['email']}-{data['codice_fiscale']}-{iban_value}"
+            request_id = hashlib.md5(unique_string.encode()).hexdigest() # Generate a simple hash as request_id if not provided, using email, codice_fiscale and iban (which are unique per user)
 
         # Duplicate request check
         query = db.select(User).where(User.request_id == request_id)
         existing_user = db.session.execute(query).scalars().first()
+
         if existing_user:
-            return jsonify({
-                "message": "Richiesta già processata!",
-                "user": existing_user.to_dict(),
-                "idempotent": True
-            }), 200
+            #We check if ALL the unique fields are already registered but we received different nome/cognome, we have to block this request
+            is_mismatch = (existing_user.nome != data.get('nome') or existing_user.cognome != data.get('cognome'))
+
+            if is_mismatch:
+                return jsonify({
+                    "message": "Attenzione: Utente già esistente con dati chiave identici.",
+                    "idempotent": True,
+                    "existing_user": existing_user.to_dict() # Just to check the real user with that unique data
+                }), 409
+
+            # if all the data are equal, that's a real idempotency request
+            else:
+                return jsonify({
+                    "message": "Richiesta già processata!",
+                    "user": existing_user.to_dict(),
+                    "idempotent": True
+                }), 200
 
         new_user = User(
             email=data['email'],
@@ -76,11 +90,21 @@ def register_user(): #We register a new user with at-most-once policy. The clien
 
     except IntegrityError as e:
         db.session.rollback()
-        if 'PRIMARY' in str(e) or 'email' in str(e):
-            return jsonify({"error": "Email già registrata"}), 409
-        elif 'codice_fiscale' in str(e):
+        error_msg = str(e.orig)
+
+        print(f"IntegrityError DB: {error_msg}")
+
+        if 'codice_fiscale' in error_msg:
             return jsonify({"error": "Codice fiscale già registrato"}), 409
-        return jsonify({"error": str(e)}), 409
+
+        elif 'iban_hash' in error_msg:
+             return jsonify({"error": "IBAN già registrato"}), 409
+
+        elif 'PRIMARY' in error_msg or 'email' in error_msg or 'request_id' in error_msg:
+            return jsonify({"error": "Email o Request ID già registrata"}), 409
+
+        return jsonify({"error": f"Dati duplicati: {error_msg}"}), 409
+
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": f"Errore durante la registrazione: {str(e)}"}), 500

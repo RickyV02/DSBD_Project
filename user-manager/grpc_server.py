@@ -12,6 +12,7 @@ class UserServiceServicer(user_service_pb2_grpc.UserServiceServicer):
     def VerifyUser(self, request, context):
         with self.app.app_context():
             try:
+                print("Ricevuta richiesta VerifyUser...", flush=True)
                 user = db.session.get(User, request.email)
                 exists = user is not None
                 return user_service_pb2.VerifyUserResponse(
@@ -27,6 +28,7 @@ class UserServiceServicer(user_service_pb2_grpc.UserServiceServicer):
 
     def GetUser(self, request, context):
         with self.app.app_context():
+            print("Ricevuta richiesta GetUser...", flush=True)
             try:
                 user = db.session.get(User, request.email)
 
@@ -62,6 +64,9 @@ def serve(app):
     )
     server.add_insecure_port('[::]:50051')
     server.start()
-    print("Server gRPC avviato sulla porta 50051")
-    print("In attesa di richieste...")
+    print("Server gRPC avviato sulla porta 50051", flush=True)
+    print("In attesa di richieste...", flush=True)
+
+    server.wait_for_termination()
+
     return server

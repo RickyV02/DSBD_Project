@@ -2,25 +2,50 @@ import grpc
 import user_service_pb2
 import user_service_pb2_grpc
 import os
+import json
 
 class UserManagerClient:
     def __init__(self):
         self.host = os.getenv('USER_MANAGER_HOST', 'user-manager')
         self.port = os.getenv('USER_MANAGER_GRPC_PORT', '50051')
-        self.channel = grpc.insecure_channel(f'{self.host}:{self.port}')
+
+        service_config = {
+            "methodConfig": [
+                {
+                    "name": [{"service": "UserService"}],
+                    "retryPolicy": {
+                        "maxAttempts": 5,
+                        "initialBackoff": "1s",
+                        "maxBackoff": "5s",
+                        "backoffMultiplier": 2,
+                        "retryableStatusCodes": ["UNAVAILABLE"]
+                    },
+                    "timeout": "10s"
+                }
+            ]
+        }
+
+        options = [
+            ('grpc.service_config', json.dumps(service_config))
+        ]
+
+        target = f'{self.host}:{self.port}'
+        self.channel = grpc.insecure_channel(target, options=options)
         self.stub = user_service_pb2_grpc.UserServiceStub(self.channel)
 
     def verify_user(self, email):
         try:
+            print("Invio richiesta VerifyUser...", flush=True)
             request = user_service_pb2.VerifyUserRequest(email=email)
             response = self.stub.VerifyUser(request)
             return response.exists, response.message
         except grpc.RpcError as e:
-            print(f"Errore gRPC nella verifica utente: {e.details()}")
+            print(f"Errore gRPC critico dopo retry: {e.details()}")
             return False, f"Errore di comunicazione: {e.details()}"
 
     def get_user(self, email):
         try:
+            print("Invio richiesta GetUser...", flush=True)
             request = user_service_pb2.GetUserRequest(email=email)
             response = self.stub.GetUser(request)
 
