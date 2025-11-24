@@ -40,7 +40,7 @@ Thumbs.db
 *.log
 
 # Docker
-docker-compose.override.yml
+.dockerignore
 
 # Database
 *.db
