@@ -34,26 +34,41 @@ def health_check():
 @app.route('/users', methods=['POST'])
 def register_user(): #We register a new user with at-most-once policy. The client can send a request_id to ensure idempotency.
     try:
+        # Fix: Check if request is valid JSON to avoid crashes
+        if not request.is_json:
+            return jsonify({"error": "Content-Type must be application/json"}), 415
+
         data = request.json
 
-        required_fields = ['email', 'nome', 'cognome', 'codice_fiscale', 'iban']
-        for field in required_fields:
-            if field not in data:
-                return jsonify({"error": f"Campo '{field}' obbligatorio"}), 400
+        # Fix: Sanitizing inputs to handle case sensitivity and extra spaces
+        email = str(data.get('email', '')).strip().lower()
+        nome = str(data.get('nome', '')).strip()
+        cognome = str(data.get('cognome', '')).strip()
+        codice_fiscale = str(data.get('codice_fiscale', '')).strip().upper()
+        iban = str(data.get('iban', '')).strip().upper()
 
-        request_id = request.headers.get('X-Request-ID') or data.get('request_id') # We can get request_id from header or body, depending on client implementation
-        if not request_id:
-            iban_value = data.get('iban', '')
-            unique_string = f"{data['email']}-{data['codice_fiscale']}-{iban_value}"
+        # Fix: Validating sanitized fields are not empty (instead of checking raw 'data')
+        if not email or not nome or not cognome or not codice_fiscale:
+             return jsonify({"error": "Campi obbligatori mancanti o vuoti"}), 400
+
+        # Fix: Robust Request ID extraction. Using 'is not None' to handle '0' (integer) correctly.
+        req_id_input = request.headers.get('X-Request-ID') or data.get('request_id')
+
+        if req_id_input is not None:
+             request_id = str(req_id_input) # We can get request_id from header or body, depending on client implementation
+        else:
+            iban_value = iban # use sanitized iban
+            unique_string = f"{email}-{codice_fiscale}-{iban_value}"
             request_id = hashlib.md5(unique_string.encode()).hexdigest() # Generate a simple hash as request_id if not provided, using email, codice_fiscale and iban (which are unique per user)
 
         # Duplicate request check
         query = db.select(User).where(User.request_id == request_id)
-        existing_user = db.session.execute(query).scalars().first()
+        existing_user = db.session.execute(query).scalar_one_or_none()
 
         if existing_user:
             #We check if ALL the unique fields are already registered but we received different nome/cognome, we have to block this request
-            is_mismatch = (existing_user.nome != data.get('nome') or existing_user.cognome != data.get('cognome'))
+            # Fix: compare with sanitized variables
+            is_mismatch = (existing_user.nome != nome or existing_user.cognome != cognome)
 
             if is_mismatch:
                 return jsonify({
@@ -71,11 +86,11 @@ def register_user(): #We register a new user with at-most-once policy. The clien
                 }), 200
 
         new_user = User(
-            email=data['email'],
-            nome=data['nome'],
-            cognome=data['cognome'],
-            codice_fiscale=data['codice_fiscale'],
-            iban=data.get('iban'),
+            email=email,
+            nome=nome,
+            cognome=cognome,
+            codice_fiscale=codice_fiscale,
+            iban=iban,
             request_id=request_id
         )
 
@@ -112,7 +127,9 @@ def register_user(): #We register a new user with at-most-once policy. The clien
 @app.route('/users/<email>', methods=['GET'])
 def get_user(email):
     try:
-        user = db.session.get(User, email)
+        # Fix: Normalize email before querying (strip spaces and lowercase)
+        clean_email = email.strip().lower()
+        user = db.session.get(User, clean_email)
 
         if not user:
             return jsonify({"error": "Utente non trovato"}), 404
@@ -125,7 +142,9 @@ def get_user(email):
 @app.route('/users/<email>', methods=['DELETE'])
 def delete_user(email):
     try:
-        user = db.session.get(User, email)
+        # Fix: Normalize email here too for consistency
+        clean_email = email.strip().lower()
+        user = db.session.get(User, clean_email)
         if not user:
             return jsonify({"error": "Utente non trovato"}), 404
 
@@ -159,9 +178,11 @@ def get_all_users():
 @app.route('/users/verify/<email>', methods=['GET'])
 def verify_user(email):
     try:
-        user = db.session.get(User, email)
+        # Fix: Normalize email for verification
+        clean_email = email.strip().lower()
+        user = db.session.get(User, clean_email)
         return jsonify({
-            "email": email,
+            "email": clean_email,
             "exists": user is not None
         }), 200
 

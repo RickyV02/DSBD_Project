@@ -40,13 +40,18 @@ def health_check():
 @app.route('/interests', methods=['POST'])
 def add_interest():
     try:
+        # Fix: Check if request is valid JSON
+        if not request.is_json:
+            return jsonify({"error": "Content-Type must be application/json"}), 415
+
         data = request.json
 
         if 'email' not in data or 'airport_icao' not in data:
             return jsonify({"error": "Campi 'email' e 'airport_icao' obbligatori"}), 400
 
-        email = data['email']
-        airport_icao = data['airport_icao'].upper()
+        # Fix: Input sanitization to ensure consistency (lowercase email, uppercase ICAO)
+        email = str(data['email']).strip().lower()
+        airport_icao = str(data['airport_icao']).strip().upper()
 
         exists, message = user_manager_client.verify_user(email)
 
@@ -56,7 +61,7 @@ def add_interest():
                 "message": message
             }), 404
 
-        existing = UserInterest.query.filter_by(user_email=email, airport_icao=airport_icao).first()
+        existing = db.session.execute(db.select(UserInterest).filter_by(user_email=email, airport_icao=airport_icao)).scalar_one_or_none()
         if not existing:
             interest = UserInterest(user_email=email, airport_icao=airport_icao)
             db.session.add(interest)
@@ -71,12 +76,16 @@ def add_interest():
         }), 201
 
     except Exception as e:
+        db.session.rollback()
         return jsonify({"error": f"Errore: {str(e)}"}), 500
 
 @app.route('/interests/<email>', methods=['GET'])
 def get_user_interests(email):
     try:
-        exists, message = user_manager_client.verify_user(email)
+        # Fix: Normalize email input from URL
+        clean_email = email.strip().lower()
+
+        exists, message = user_manager_client.verify_user(clean_email)
 
         if not exists:
             return jsonify({
@@ -84,10 +93,10 @@ def get_user_interests(email):
                 "message": message
             }), 404
 
-        interests = UserInterest.query.filter_by(user_email=email).order_by(UserInterest.created_at.desc()).all()
+        interests = db.session.execute(db.select(UserInterest).filter_by(user_email=clean_email).order_by(UserInterest.created_at.desc())).scalars().all()
 
         return jsonify({
-            "email": email,
+            "email": clean_email,
             "interests": [i.to_dict() for i in interests],
             "count": len(interests)
         }), 200
@@ -98,13 +107,15 @@ def get_user_interests(email):
 @app.route('/interests', methods=['DELETE'])
 def remove_interest():
     try:
-        email = request.args.get('email')
-        airport_icao = request.args.get('airport_icao')
+        email_raw = request.args.get('email')
+        icao_raw = request.args.get('airport_icao')
 
-        if not email or not airport_icao:
+        if not email_raw or not icao_raw:
             return jsonify({"error": "Campi 'email' e 'airport_icao' obbligatori nell'URL"}), 400
 
-        airport_icao = airport_icao.upper()
+        # Fix: Normalize inputs
+        email = email_raw.strip().lower()
+        airport_icao = icao_raw.strip().upper()
 
         exists, message = user_manager_client.verify_user(email)
         if not exists:
@@ -113,7 +124,7 @@ def remove_interest():
                 "message": message
             }), 404
 
-        interest = UserInterest.query.filter_by(user_email=email, airport_icao=airport_icao).first()
+        interest = db.session.execute(db.select(UserInterest).filter_by(user_email=email, airport_icao=airport_icao)).scalar_one_or_none()
 
         if not interest:
             return jsonify({"error": "Interesse non trovato"}), 404
@@ -139,14 +150,18 @@ def get_flights(airport_icao):
         if not email:
             return jsonify({"error": "Parametro 'email' obbligatorio"}), 400
 
-        exists, message = user_manager_client.verify_user(email)
+        # Fix: Normalize email and ICAO
+        clean_email = email.strip().lower()
+        clean_icao = airport_icao.strip().upper()
+
+        exists, message = user_manager_client.verify_user(clean_email)
         if not exists:
             return jsonify({
                 "error": "Utente non trovato",
                 "message": message
             }), 404
 
-        interest = UserInterest.query.filter_by(user_email=email, airport_icao=airport_icao.upper()).first()
+        interest = db.session.execute(db.select(UserInterest).filter_by(user_email=clean_email, airport_icao=clean_icao)).scalar_one_or_none()
 
         if not interest:
             return jsonify({
@@ -160,15 +175,19 @@ def get_flights(airport_icao):
 
         limit = int(request.args.get('limit', 100)) # if not provided, default to 100
 
-        query = FlightData.query.filter_by(airport_icao=airport_icao.upper())
+        # Fix: Enforce a hard limit to prevent DoS attacks (Database overload)
+        if limit > 1000:
+            limit = 1000
+
+        query = db.select(FlightData).filter_by(airport_icao=clean_icao)
 
         if flight_type:
             query = query.filter_by(flight_type=flight_type)
 
-        flights = query.order_by(FlightData.collected_at.desc()).limit(limit).all()
+        flights = db.session.execute(query.order_by(FlightData.collected_at.desc()).limit(limit)).scalars().all()
 
         return jsonify({
-            "airport_icao": airport_icao.upper(),
+            "airport_icao": clean_icao,
             "flights": [f.to_dict() for f in flights],
             "count": len(flights)
         }), 200
@@ -188,25 +207,29 @@ def get_latest_flight(airport_icao):
         if flight_type and flight_type not in ['departure', 'arrival']:
             return jsonify({"error": "Il parametro type, se presente, deve essere 'departure' o 'arrival'"}), 400
 
-        exists, message = user_manager_client.verify_user(email)
+        # Fix: Normalize inputs
+        clean_email = email.strip().lower()
+        clean_icao = airport_icao.strip().upper()
+
+        exists, message = user_manager_client.verify_user(clean_email)
         if not exists:
             return jsonify({
                 "error": "Utente non trovato",
                 "message": message
             }), 404
 
-        interest = UserInterest.query.filter_by(user_email=email, airport_icao=airport_icao.upper()).first()
+        interest = db.session.execute(db.select(UserInterest).filter_by(user_email=clean_email, airport_icao=clean_icao)).scalar_one_or_none()
         if not interest:
             return jsonify({"error": "Aeroporto non tra gli interessi dell'utente"}), 403
 
         def fetch_latest(f_type):
-            return FlightData.query.filter_by(
-                airport_icao=airport_icao.upper(),
+            return db.session.execute(db.select(FlightData).filter_by(
+                airport_icao=clean_icao,
                 flight_type=f_type
-            ).order_by(FlightData.collected_at.desc()).first()
+            ).order_by(FlightData.collected_at.desc())).scalars().first()
 
         response_data = {
-            "airport_icao": airport_icao.upper()
+            "airport_icao": clean_icao
         }
 
         if flight_type:
@@ -239,6 +262,8 @@ def get_average_flights(airport_icao):
     try:
         email = request.args.get('email')
         days = int(request.args.get('days', 7))
+        # Fix: Ensure days is positive
+        if days < 1: days = 1
 
         flight_type = request.args.get('type')
 
@@ -248,30 +273,34 @@ def get_average_flights(airport_icao):
         if flight_type and flight_type not in ['departure', 'arrival']:
             return jsonify({"error": "Il parametro type, se presente, deve essere 'departure' o 'arrival'"}), 400
 
-        exists, message = user_manager_client.verify_user(email)
+        # Fix: Normalize inputs
+        clean_email = email.strip().lower()
+        clean_icao = airport_icao.strip().upper()
+
+        exists, message = user_manager_client.verify_user(clean_email)
         if not exists:
             return jsonify({
                 "error": "Utente non trovato",
                 "message": message
             }), 404
 
-        interest = UserInterest.query.filter_by(user_email=email, airport_icao=airport_icao.upper()).first()
+        interest = db.session.execute(db.select(UserInterest).filter_by(user_email=clean_email, airport_icao=clean_icao)).scalar_one_or_none()
         if not interest:
             return jsonify({"error": "Aeroporto non tra gli interessi dell'utente"}), 403
 
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
         def calculate_stats(f_type):
-            count = FlightData.query.filter(
-                FlightData.airport_icao == airport_icao.upper(),
+            count = db.session.execute(db.select(func.count()).select_from(FlightData).filter(
+                FlightData.airport_icao == clean_icao,
                 FlightData.flight_type == f_type,
                 FlightData.collected_at >= cutoff_date
-            ).count()
+            )).scalar()
             avg = count / days if days > 0 else 0
             return count, round(avg, 2)
 
         response_data = {
-            "airport_icao": airport_icao.upper(),
+            "airport_icao": clean_icao,
             "days_analyzed": days
         }
 
