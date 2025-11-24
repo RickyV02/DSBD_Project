@@ -34,30 +34,29 @@ def health_check():
 @app.route('/users', methods=['POST'])
 def register_user(): #We register a new user with at-most-once policy. The client can send a request_id to ensure idempotency.
     try:
-        # Fix: Check if request is valid JSON to avoid crashes
+        #Check if request is valid JSON to avoid crashes
         if not request.is_json:
             return jsonify({"error": "Content-Type must be application/json"}), 415
 
         data = request.json
 
-        # Fix: Sanitizing inputs to handle case sensitivity and extra spaces
+        #Sanitizing inputs to handle case sensitivity and extra spaces
         email = str(data.get('email', '')).strip().lower()
         nome = str(data.get('nome', '')).strip()
         cognome = str(data.get('cognome', '')).strip()
         codice_fiscale = str(data.get('codice_fiscale', '')).strip().upper()
         iban = str(data.get('iban', '')).strip().upper()
 
-        # Fix: Validating sanitized fields are not empty (instead of checking raw 'data')
         if not email or not nome or not cognome or not codice_fiscale:
              return jsonify({"error": "Campi obbligatori mancanti o vuoti"}), 400
 
-        # Fix: Robust Request ID extraction. Using 'is not None' to handle '0' (integer) correctly.
+        # We can get request_id from header or body, depending on client implementation
         req_id_input = request.headers.get('X-Request-ID') or data.get('request_id')
 
         if req_id_input is not None:
-             request_id = str(req_id_input) # We can get request_id from header or body, depending on client implementation
+             request_id = str(req_id_input)
         else:
-            iban_value = iban # use sanitized iban
+            iban_value = iban
             unique_string = f"{email}-{codice_fiscale}-{iban_value}"
             request_id = hashlib.md5(unique_string.encode()).hexdigest() # Generate a simple hash as request_id if not provided, using email, codice_fiscale and iban (which are unique per user)
 
@@ -67,7 +66,6 @@ def register_user(): #We register a new user with at-most-once policy. The clien
 
         if existing_user:
             #We check if ALL the unique fields are already registered but we received different nome/cognome, we have to block this request
-            # Fix: compare with sanitized variables
             is_mismatch = (existing_user.nome != nome or existing_user.cognome != cognome)
 
             if is_mismatch:
@@ -77,7 +75,7 @@ def register_user(): #We register a new user with at-most-once policy. The clien
                     "existing_user": existing_user.to_dict() # Just to check the real user with that unique data
                 }), 409
 
-            # if all the data are equal, that's a real idempotency request
+            #if all the data are equal, that's a real idempotency request
             else:
                 return jsonify({
                     "message": "Richiesta già processata!",
@@ -127,7 +125,7 @@ def register_user(): #We register a new user with at-most-once policy. The clien
 @app.route('/users/<email>', methods=['GET'])
 def get_user(email):
     try:
-        # Fix: Normalize email before querying (strip spaces and lowercase)
+        #Normalize email before querying (strip spaces and lowercase)
         clean_email = email.strip().lower()
         user = db.session.get(User, clean_email)
 
@@ -142,7 +140,6 @@ def get_user(email):
 @app.route('/users/<email>', methods=['DELETE'])
 def delete_user(email):
     try:
-        # Fix: Normalize email here too for consistency
         clean_email = email.strip().lower()
         user = db.session.get(User, clean_email)
         if not user:
@@ -178,7 +175,6 @@ def get_all_users():
 @app.route('/users/verify/<email>', methods=['GET'])
 def verify_user(email):
     try:
-        # Fix: Normalize email for verification
         clean_email = email.strip().lower()
         user = db.session.get(User, clean_email)
         return jsonify({

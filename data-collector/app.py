@@ -40,7 +40,7 @@ def health_check():
 @app.route('/interests', methods=['POST'])
 def add_interest():
     try:
-        # Fix: Check if request is valid JSON
+        # Check if request is valid JSON
         if not request.is_json:
             return jsonify({"error": "Content-Type must be application/json"}), 415
 
@@ -49,7 +49,7 @@ def add_interest():
         if 'email' not in data or 'airport_icao' not in data:
             return jsonify({"error": "Campi 'email' e 'airport_icao' obbligatori"}), 400
 
-        # Fix: Input sanitization to ensure consistency (lowercase email, uppercase ICAO)
+        # Input sanitization to ensure consistency (lowercase email, uppercase ICAO)
         email = str(data['email']).strip().lower()
         airport_icao = str(data['airport_icao']).strip().upper()
 
@@ -82,7 +82,7 @@ def add_interest():
 @app.route('/interests/<email>', methods=['GET'])
 def get_user_interests(email):
     try:
-        # Fix: Normalize email input from URL
+        # Normalize email input from URL
         clean_email = email.strip().lower()
 
         exists, message = user_manager_client.verify_user(clean_email)
@@ -113,7 +113,6 @@ def remove_interest():
         if not email_raw or not icao_raw:
             return jsonify({"error": "Campi 'email' e 'airport_icao' obbligatori nell'URL"}), 400
 
-        # Fix: Normalize inputs
         email = email_raw.strip().lower()
         airport_icao = icao_raw.strip().upper()
 
@@ -150,7 +149,6 @@ def get_flights(airport_icao):
         if not email:
             return jsonify({"error": "Parametro 'email' obbligatorio"}), 400
 
-        # Fix: Normalize email and ICAO
         clean_email = email.strip().lower()
         clean_icao = airport_icao.strip().upper()
 
@@ -168,7 +166,7 @@ def get_flights(airport_icao):
                 "error": "Aeroporto non tra gli interessi dell'utente"
             }), 403
 
-        flight_type = request.args.get('type') # Could be None, or 'departure' or 'arrival' (even a string not valid, like "foo")
+        flight_type = request.args.get('type') # Could be None, or 'departure' or 'arrival' (even a string not valid, like "pippo")
 
         if flight_type and flight_type not in ['departure', 'arrival']:
             return jsonify({"error": "Il parametro type, se presente, deve essere 'departure' o 'arrival'"}), 400
@@ -207,7 +205,6 @@ def get_latest_flight(airport_icao):
         if flight_type and flight_type not in ['departure', 'arrival']:
             return jsonify({"error": "Il parametro type, se presente, deve essere 'departure' o 'arrival'"}), 400
 
-        # Fix: Normalize inputs
         clean_email = email.strip().lower()
         clean_icao = airport_icao.strip().upper()
 
@@ -262,7 +259,7 @@ def get_average_flights(airport_icao):
     try:
         email = request.args.get('email')
         days = int(request.args.get('days', 7))
-        # Fix: Ensure days is positive
+        # Ensure days is positive
         if days < 1: days = 1
 
         flight_type = request.args.get('type')
@@ -273,7 +270,6 @@ def get_average_flights(airport_icao):
         if flight_type and flight_type not in ['departure', 'arrival']:
             return jsonify({"error": "Il parametro type, se presente, deve essere 'departure' o 'arrival'"}), 400
 
-        # Fix: Normalize inputs
         clean_email = email.strip().lower()
         clean_icao = airport_icao.strip().upper()
 
