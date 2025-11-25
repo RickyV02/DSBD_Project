@@ -7,6 +7,7 @@ import threading
 import os
 import hashlib
 import re
+import uuid
 from sqlalchemy.exc import IntegrityError
 
 app = Flask(__name__)
@@ -40,6 +41,21 @@ def is_valid_iban(iban):
     iban_regex = r'^IT[0-9]{2}[A-Z][0-9]{10}[0-9A-Z]{12}$'
     return re.match(iban_regex, iban) is not None
 
+# Helper for robust input sanitization: handles None values (JSON null) gracefully
+def get_clean_input(data, key):
+    val = data.get(key)
+    if val is None:
+        return ""
+    return str(val).strip()
+
+# Helper for UUID validation
+def is_valid_uuid(val):
+    try:
+        uuid.UUID(str(val))
+        return True
+    except ValueError:
+        return False
+
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "healthy", "service": "user-manager"}), 200
@@ -54,14 +70,15 @@ def register_user(): #We register a new user with at-most-once policy. The clien
         data = request.json
 
         #Sanitizing inputs to handle case sensitivity and extra spaces
-        email = str(data.get('email', '')).strip().lower()
-        nome = str(data.get('nome', '')).strip()
-        cognome = str(data.get('cognome', '')).strip()
-        codice_fiscale = str(data.get('codice_fiscale', '')).strip().upper()
-        iban = str(data.get('iban', '')).strip().upper()
+        # Using helper to prevent crashes on JSON null values
+        email = get_clean_input(data, 'email').lower()
+        nome = get_clean_input(data, 'nome')
+        cognome = get_clean_input(data, 'cognome')
+        codice_fiscale = get_clean_input(data, 'codice_fiscale').upper()
+        iban = get_clean_input(data, 'iban').upper()
 
         if not email or not nome or not cognome or not codice_fiscale or not iban:
-             return jsonify({"error": "Campi obbligatori mancanti o vuoti"}), 400
+            return jsonify({"error": "Campi obbligatori mancanti o vuoti"}), 400
 
         if not is_valid_email(email):
             return jsonify({"error": "Formato email non valido"}), 400
@@ -72,11 +89,13 @@ def register_user(): #We register a new user with at-most-once policy. The clien
         if not is_valid_iban(iban):
             return jsonify({"error": "Formato IBAN non valido"}), 400
 
-        # We can get request_id from header or body, depending on client implementation
+        # We can get request_id from header or body, depending on client implementation (which should be an UUID ideally)
         req_id_input = request.headers.get('X-Request-ID') or data.get('request_id')
 
         if req_id_input is not None:
-             request_id = str(req_id_input)
+            if not is_valid_uuid(req_id_input): # Validate UUID if present to enforce standard compliance
+                return jsonify({"error": "Formato Request-ID non valido"}), 400
+            request_id = str(req_id_input)
         else:
             iban_value = iban
             unique_string = f"{email}-{codice_fiscale}-{iban_value}"
