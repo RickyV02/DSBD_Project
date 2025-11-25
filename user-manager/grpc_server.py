@@ -12,9 +12,14 @@ class UserServiceServicer(user_service_pb2_grpc.UserServiceServicer):
     def VerifyUser(self, request, context):
         with self.app.app_context():
             try:
+                db.session.rollback() #Ensure clean session state before query
+
                 print("Ricevuta richiesta VerifyUser...", flush=True)
+
                 user = db.session.get(User, request.email)
+
                 exists = user is not None
+
                 return user_service_pb2.VerifyUserResponse(
                     exists=exists,
                     message="Utente trovato" if exists else "Utente non trovato"
@@ -28,8 +33,11 @@ class UserServiceServicer(user_service_pb2_grpc.UserServiceServicer):
 
     def GetUser(self, request, context):
         with self.app.app_context():
-            print("Ricevuta richiesta GetUser...", flush=True)
             try:
+                db.session.rollback() #Ensure clean session state before query
+                
+                print("Ricevuta richiesta GetUser...", flush=True)
+
                 user = db.session.get(User, request.email)
 
                 if user:

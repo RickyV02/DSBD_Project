@@ -70,17 +70,22 @@ def add_interest():
             }), 404
 
         existing = db.session.execute(db.select(UserInterest).filter_by(user_email=email, airport_icao=airport_icao)).scalar_one_or_none()
-        if not existing:
-            interest = UserInterest(user_email=email, airport_icao=airport_icao)
-            db.session.add(interest)
-            db.session.commit()
-            interest_dict = interest.to_dict()
-        else:
-            interest_dict = existing.to_dict()
+        if existing:
+            return jsonify({
+                "message": "Interesse già presente per questo aeroporto!",
+                "interest": existing.to_dict(),
+                "already_exists": True
+            }), 200
+
+        interest = UserInterest(user_email=email, airport_icao=airport_icao)
+        db.session.add(interest)
+        db.session.commit()
+        interest_dict = interest.to_dict()
 
         return jsonify({
             "message": "Interesse aggiunto con successo",
-            "interest": interest_dict
+            "interest": interest_dict,
+            "already_exists": False
         }), 201
 
     except Exception as e:
@@ -367,9 +372,9 @@ def scheduler_status():
         return jsonify({"error": f"Errore: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    print("Avvio Data Collector Service...")
-    print(f"REST API sulla porta 5001")
-    print(f"Raccolta dati ogni {collection_interval} ore")
+    print("Avvio Data Collector Service...", flush=True)
+    print(f"REST API sulla porta 5001", flush=True)
+    print(f"Raccolta dati ogni {collection_interval} ore", flush=True)
 
     scheduler.start(interval_hours=collection_interval) # Start the scheduler, it will run in background (threaded)
 

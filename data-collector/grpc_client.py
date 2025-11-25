@@ -40,7 +40,7 @@ class UserManagerClient:
             response = self.stub.VerifyUser(request)
             return response.exists, response.message
         except grpc.RpcError as e:
-            print(f"Errore gRPC critico dopo retry: {e.details()}")
+            print(f"Errore gRPC critico dopo retry: {e.details()}", flush=True)
             return False, f"Errore di comunicazione: {e.details()}"
 
     def get_user(self, email):
@@ -61,7 +61,7 @@ class UserManagerClient:
             else:
                 return {'exists': False}
         except grpc.RpcError as e:
-            print(f"Errore gRPC nel recupero utente: {e.details()}")
+            print(f"Errore gRPC nel recupero utente: {e.details()}", flush=True)
             return {'exists': False, 'error': e.details()}
 
     def close(self):

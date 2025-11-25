@@ -14,7 +14,7 @@ class OpenSkyClient:
         self.authenticate()
 
     def authenticate(self):
-        print("Richiesta nuovo Token di accesso a OpenSky...")
+        print("Richiesta nuovo Token di accesso a OpenSky...", flush=True)
         payload = {
             'grant_type': 'client_credentials',
             'client_id': self.client_id,
@@ -24,12 +24,12 @@ class OpenSkyClient:
             response = requests.post(self.auth_url, data=payload)
             if response.status_code == 200:
                 self.token = response.json().get('access_token')
-                print("Token ottenuto con successo!")
+                print("Token ottenuto con successo!", flush=True)
             else:
-                print(f"Errore Autenticazione: {response.status_code} - {response.text}")
+                print(f"Errore Autenticazione: {response.status_code} - {response.text}", flush=True)
                 self.token = None
         except Exception as e:
-            print(f"Errore connessione Auth: {e}")
+            print(f"Errore connessione Auth: {e}", flush=True)
 
     def get_headers(self):
         if not self.token:
@@ -46,24 +46,24 @@ class OpenSkyClient:
         params = {'airport': airport_icao, 'begin': begin_timestamp, 'end': end_timestamp}
 
         try:
-            print(f"Recupero partenze da {airport_icao}...")
+            print(f"Recupero partenze da {airport_icao}...", flush=True)
             response = requests.get(url, params=params, headers=self.get_headers(), timeout=30)
 
             if response.status_code == 200:
                 flights = response.json()
                 return flights
             elif response.status_code == 401:
-                print("Token scaduto! Rinnovo e riprovo...")
+                print("Token scaduto! Rinnovo e riprovo...", flush=True)
                 self.authenticate()
                 return self.get_departures(airport_icao, begin_timestamp, end_timestamp) # Retry after re-authentication
             elif response.status_code == 404:
-                print(f"Nessun dato trovato per {airport_icao}")
+                print(f"Nessun dato trovato per {airport_icao}", flush=True)
                 return []
             else:
-                print(f"Errore API: {response.status_code}")
+                print(f"Errore API: {response.status_code}", flush=True)
                 return []
         except Exception as e:
-            print(f"Errore richiesta: {str(e)}")
+            print(f"Errore richiesta: {str(e)}", flush=True)
             return []
 
     def get_arrivals(self, airport_icao, begin_timestamp=None, end_timestamp=None):
@@ -76,7 +76,7 @@ class OpenSkyClient:
         params = {'airport': airport_icao, 'begin': begin_timestamp, 'end': end_timestamp}
 
         try:
-            print(f"Recupero arrivi a {airport_icao}...")
+            print(f"Recupero arrivi a {airport_icao}...", flush=True)
             response = requests.get(url, params=params, headers=self.get_headers(), timeout=30)
 
             if response.status_code == 200:
@@ -88,10 +88,10 @@ class OpenSkyClient:
             elif response.status_code == 404:
                 return []
             else:
-                print(f"Errore API: {response.status_code}")
+                print(f"Errore API: {response.status_code}", flush=True)
                 return []
         except Exception as e:
-            print(f"Errore richiesta: {str(e)}")
+            print(f"Errore richiesta: {str(e)}", flush=True)
             return []
 
     def get_flights_for_airport(self, airport_icao, begin_timestamp=None, end_timestamp=None):

@@ -19,28 +19,28 @@ class DataCollectorScheduler:
     def collect_data_job(self):
         with self.app.app_context():
             try:
-                print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Avvio raccolta dati periodica...")
+                print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Avvio raccolta dati periodica...", flush=True)
 
                 query = select(UserInterest.airport_icao).distinct()
                 airports_query = db.session.execute(query).scalars().all()
                 airports = list(airports_query)
 
                 if not airports:
-                    print("Nessun aeroporto da monitorare")
+                    print("Nessun aeroporto da monitorare", flush=True)
                     return
 
-                print(f"Aeroporti da monitorare: {', '.join(airports)}")
+                print(f"Aeroporti da monitorare: {', '.join(airports)}", flush=True)
                 total_saved = 0
 
                 def fetch_airport_data(icao):
                     thread_name = threading.current_thread().name
-                    print(f"Thread {thread_name} avviato per: {icao}")
+                    print(f"Thread {thread_name} avviato per: {icao}", flush=True)
                     try:
-                        print(f"Richiesta OpenSky per {icao} in corso...")
+                        print(f"Richiesta OpenSky per {icao} in corso...", flush=True)
                         data = self.opensky_client.get_flights_for_airport(icao)
                         return icao, data
                     except Exception as e:
-                        print(f"Errore download {icao}: {e}")
+                        print(f"Errore download {icao}: {e}", flush=True)
                         return icao, None
 
                 with ThreadPoolExecutor(max_workers=5) as executor:
@@ -62,17 +62,17 @@ class DataCollectorScheduler:
                             if flight_data.get('arrivals'):
                                 c_arr = self._save_flights(airport_icao, flight_data['arrivals'], 'arrival')
 
-                            print(f"-> Completato {airport_icao}: Processati {c_dep} partenze, {c_arr} arrivi.")
+                            print(f"-> Completato {airport_icao}: Processati {c_dep} partenze, {c_arr} arrivi.", flush=True)
                             total_saved += (c_dep + c_arr)
 
                         except Exception as e:
                             db.session.rollback()
-                            print(f"Errore critico salvataggio DB per {airport_icao}: {e}")
+                            print(f"Errore critico salvataggio DB per {airport_icao}: {e}", flush=True)
 
-                print(f"\nRaccolta completata! Totale voli processati: {total_saved}")
+                print(f"\nRaccolta completata! Totale voli processati: {total_saved}", flush=True)
 
             except Exception as e:
-                print(f"Errore generale nel job di raccolta dati: {e}")
+                print(f"Errore generale nel job di raccolta dati: {e}", flush=True)
 
             finally:
                 db.session.remove()
@@ -82,8 +82,8 @@ class DataCollectorScheduler:
             return 0
 
         # PERFORMANCE IMPROVEMENT:
-        # Instead of executing a DB query for every single flight inside the loop (N+1 complexity),
-        # we now simply prepare a list of dictionaries in memory.
+        # Instead of executing a DB query for every single flight inside the loop (O(N) complexity),
+        # we now simply prepare a list of dictionaries in memory (O(1) complexity).
         # This avoids network latency and massive DB I/O overhead.
         insert_values = []
         for flight in flight_data_list:
@@ -137,7 +137,7 @@ class DataCollectorScheduler:
 
         except Exception as e:
             db.session.rollback()
-            print(f"Errore bulk upsert per {airport_icao}: {e}")
+            print(f"Errore bulk upsert per {airport_icao}: {e}", flush=True)
             raise e
 
     def start(self, interval_hours=12):
@@ -151,11 +151,11 @@ class DataCollectorScheduler:
         )
         self.collect_data_job()
         self.scheduler.start()
-        print(f"Scheduler avviato: raccolta ogni {interval_hours} ore")
+        print(f"Scheduler avviato: raccolta ogni {interval_hours} ore", flush=True)
 
     def stop(self):
         self.scheduler.shutdown()
-        print("Scheduler fermato")
+        print("Scheduler fermato", flush=True)
 
     def get_jobs(self):
         return self.scheduler.get_jobs()

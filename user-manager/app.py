@@ -32,6 +32,14 @@ def is_valid_email(email):
     email_regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
     return re.match(email_regex, email) is not None
 
+def is_valid_codice_fiscale(cf):
+    cf_regex = r'^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$'
+    return re.match(cf_regex, cf) is not None
+
+def is_valid_iban(iban):
+    iban_regex = r'^IT[0-9]{2}[A-Z][0-9]{10}[0-9A-Z]{12}$'
+    return re.match(iban_regex, iban) is not None
+
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "healthy", "service": "user-manager"}), 200
@@ -52,11 +60,17 @@ def register_user(): #We register a new user with at-most-once policy. The clien
         codice_fiscale = str(data.get('codice_fiscale', '')).strip().upper()
         iban = str(data.get('iban', '')).strip().upper()
 
-        if not email or not nome or not cognome or not codice_fiscale:
+        if not email or not nome or not cognome or not codice_fiscale or not iban:
              return jsonify({"error": "Campi obbligatori mancanti o vuoti"}), 400
 
         if not is_valid_email(email):
             return jsonify({"error": "Formato email non valido"}), 400
+
+        if not is_valid_codice_fiscale(codice_fiscale):
+            return jsonify({"error": "Formato codice fiscale non valido"}), 400
+
+        if not is_valid_iban(iban):
+            return jsonify({"error": "Formato IBAN non valido"}), 400
 
         # We can get request_id from header or body, depending on client implementation
         req_id_input = request.headers.get('X-Request-ID') or data.get('request_id')
@@ -113,7 +127,7 @@ def register_user(): #We register a new user with at-most-once policy. The clien
         db.session.rollback()
         error_msg = str(e.orig)
 
-        print(f"IntegrityError DB: {error_msg}")
+        print(f"IntegrityError DB: {error_msg}", flush=True)
 
         if 'codice_fiscale' in error_msg:
             return jsonify({"error": "Codice fiscale già registrato"}), 409
@@ -206,7 +220,7 @@ def verify_user(email):
         return jsonify({"error": f"Errore durante la verifica: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    print("Avvio User Manager Service...")
-    print("REST API sulla porta 5000")
-    print("gRPC Server sulla porta 50051")
+    print("Avvio User Manager Service...", flush=True)
+    print("REST API sulla porta 5000", flush=True)
+    print("gRPC Server sulla porta 50051", flush=True)
     app.run(host='0.0.0.0', port=5000, debug=False)
