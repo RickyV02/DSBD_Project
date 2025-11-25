@@ -6,6 +6,7 @@ from grpc_client import UserManagerClient
 from opensky_client import OpenSkyClient
 from scheduler import DataCollectorScheduler
 import os
+import re
 from sqlalchemy import func
 from datetime import datetime, timedelta, timezone
 
@@ -26,6 +27,10 @@ opensky_client = OpenSkyClient()
 
 scheduler = DataCollectorScheduler(app, db, opensky_client)
 collection_interval = int(os.getenv('COLLECTION_INTERVAL_HOURS', '12'))
+
+def is_valid_email(email):
+    email_regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
+    return re.match(email_regex, email) is not None
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -52,6 +57,9 @@ def add_interest():
         # Input sanitization to ensure consistency (lowercase email, uppercase ICAO)
         email = str(data['email']).strip().lower()
         airport_icao = str(data['airport_icao']).strip().upper()
+
+        if not is_valid_email(email):
+            return jsonify({"error": "Formato email non valido"}), 400
 
         exists, message = user_manager_client.verify_user(email)
 
@@ -85,6 +93,9 @@ def get_user_interests(email):
         # Normalize email input from URL
         clean_email = email.strip().lower()
 
+        if not is_valid_email(clean_email):
+            return jsonify({"error": "Formato email non valido"}), 400
+
         exists, message = user_manager_client.verify_user(clean_email)
 
         if not exists:
@@ -115,6 +126,9 @@ def remove_interest():
 
         email = email_raw.strip().lower()
         airport_icao = icao_raw.strip().upper()
+
+        if not is_valid_email(email):
+             return jsonify({"error": "Formato email non valido"}), 400
 
         exists, message = user_manager_client.verify_user(email)
         if not exists:
@@ -151,6 +165,9 @@ def get_flights(airport_icao):
 
         clean_email = email.strip().lower()
         clean_icao = airport_icao.strip().upper()
+
+        if not is_valid_email(clean_email):
+             return jsonify({"error": "Formato email non valido"}), 400
 
         exists, message = user_manager_client.verify_user(clean_email)
         if not exists:
@@ -207,6 +224,9 @@ def get_latest_flight(airport_icao):
 
         clean_email = email.strip().lower()
         clean_icao = airport_icao.strip().upper()
+
+        if not is_valid_email(clean_email):
+             return jsonify({"error": "Formato email non valido"}), 400
 
         exists, message = user_manager_client.verify_user(clean_email)
         if not exists:
@@ -272,6 +292,9 @@ def get_average_flights(airport_icao):
 
         clean_email = email.strip().lower()
         clean_icao = airport_icao.strip().upper()
+
+        if not is_valid_email(clean_email):
+             return jsonify({"error": "Formato email non valido"}), 400
 
         exists, message = user_manager_client.verify_user(clean_email)
         if not exists:

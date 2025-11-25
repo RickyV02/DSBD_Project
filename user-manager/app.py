@@ -6,6 +6,7 @@ import grpc_server
 import threading
 import os
 import hashlib
+import re
 from sqlalchemy.exc import IntegrityError
 
 app = Flask(__name__)
@@ -26,6 +27,10 @@ def start_grpc_server():
 
 grpc_thread = threading.Thread(target=start_grpc_server, daemon=True) # Daemon thread will die when main program exits !
 grpc_thread.start()
+
+def is_valid_email(email):
+    email_regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
+    return re.match(email_regex, email) is not None
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -49,6 +54,9 @@ def register_user(): #We register a new user with at-most-once policy. The clien
 
         if not email or not nome or not cognome or not codice_fiscale:
              return jsonify({"error": "Campi obbligatori mancanti o vuoti"}), 400
+
+        if not is_valid_email(email):
+            return jsonify({"error": "Formato email non valido"}), 400
 
         # We can get request_id from header or body, depending on client implementation
         req_id_input = request.headers.get('X-Request-ID') or data.get('request_id')
@@ -127,6 +135,10 @@ def get_user(email):
     try:
         #Normalize email before querying (strip spaces and lowercase)
         clean_email = email.strip().lower()
+
+        if not is_valid_email(clean_email):
+            return jsonify({"error": "Formato email non valido"}), 400
+
         user = db.session.get(User, clean_email)
 
         if not user:
@@ -141,6 +153,10 @@ def get_user(email):
 def delete_user(email):
     try:
         clean_email = email.strip().lower()
+
+        if not is_valid_email(clean_email):
+            return jsonify({"error": "Formato email non valido"}), 400
+
         user = db.session.get(User, clean_email)
         if not user:
             return jsonify({"error": "Utente non trovato"}), 404
@@ -176,6 +192,10 @@ def get_all_users():
 def verify_user(email):
     try:
         clean_email = email.strip().lower()
+
+        if not is_valid_email(clean_email):
+            return jsonify({"error": "Formato email non valido"}), 400
+
         user = db.session.get(User, clean_email)
         return jsonify({
             "email": clean_email,
