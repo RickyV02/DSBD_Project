@@ -9,6 +9,8 @@ import os
 import re
 from sqlalchemy import func
 from datetime import datetime, timedelta, timezone
+import threading
+import grpc_server
 
 app = Flask(__name__)
 CORS(app)
@@ -21,6 +23,13 @@ db.init_app(app)
 
 with app.app_context():
     db.create_all()
+
+def start_grpc_server():
+    print("Avvio thread server gRPC Data Collector...", flush=True)
+    grpc_server.serve(app)
+
+grpc_thread = threading.Thread(target=start_grpc_server, daemon=True)
+grpc_thread.start()
 
 user_manager_client = UserManagerClient()
 opensky_client = OpenSkyClient()
@@ -374,6 +383,7 @@ def scheduler_status():
 if __name__ == '__main__':
     print("Avvio Data Collector Service...", flush=True)
     print(f"REST API sulla porta 5001", flush=True)
+    print(f"gRPC Server sulla porta 50052", flush=True)
     print(f"Raccolta dati ogni {collection_interval} ore", flush=True)
 
     scheduler.start(interval_hours=collection_interval) # Start the scheduler, it will run in background (threaded)

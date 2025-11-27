@@ -6,7 +6,7 @@ from datetime import datetime
 from flask import Flask
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
-from sqlalchemy import select
+from sqlalchemy import select, delete, not_
 from sqlalchemy.dialects.mysql import insert # Importing the specific MySQL dialect 'insert' to enable the ON DUPLICATE KEY UPDATE' feature (Upsert).
 
 class DataCollectorScheduler:
@@ -21,15 +21,36 @@ class DataCollectorScheduler:
             try:
                 print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Avvio raccolta dati periodica...", flush=True)
 
+                # Fetch ACTIVE airports (current user interests)
                 query = select(UserInterest.airport_icao).distinct()
                 airports_query = db.session.execute(query).scalars().all()
-                airports = list(airports_query)
+                active_airports = list(airports_query)
 
-                if not airports:
-                    print("Nessun aeroporto da monitorare", flush=True)
-                    return
+                # Deletes flight data for airports that are no longer in the active list.
+                # This ensures that if an airport is abandoned by all users, its data is eventually removed.
+                try:
+                    if not active_airports:
+                        print("Nessun interesse attivo. Pulizia completa voli...", flush=True)
+                        deleted = db.session.execute(delete(FlightData))
+                        db.session.commit()
+                        if deleted.rowcount > 0:
+                            print(f"Pulizia completata: rimossi {deleted.rowcount} voli.", flush=True)
+                        return
+                    else:
+                        # Delete flight data where airport_icao is NOT IN active_airports
+                        print("Pulizia voli di aeroporti non più monitorati...", flush=True)
+                        cleanup_query = delete(FlightData).where(
+                            not_(FlightData.airport_icao.in_(active_airports))
+                        )
+                        deleted = db.session.execute(cleanup_query)
+                        db.session.commit()
+                        if deleted.rowcount > 0:
+                            print(f"Pulizia completata: rimossi {deleted.rowcount} voli.", flush=True)
+                except Exception as e:
+                    db.session.rollback()
+                    print(f"Errore durante la pulizia voli: {e}", flush=True)
 
-                print(f"Aeroporti da monitorare: {', '.join(airports)}", flush=True)
+                print(f"Aeroporti da monitorare: {', '.join(active_airports)}", flush=True)
                 total_saved = 0
 
                 def fetch_airport_data(icao):
@@ -44,7 +65,7 @@ class DataCollectorScheduler:
                         return icao, None
 
                 with ThreadPoolExecutor(max_workers=5) as executor:
-                    future_to_icao = {executor.submit(fetch_airport_data, icao): icao for icao in airports}
+                    future_to_icao = {executor.submit(fetch_airport_data, icao): icao for icao in active_airports}
 
                     for future in as_completed(future_to_icao):
                         airport_icao, flight_data = future.result()

@@ -15,7 +15,7 @@ class User(db.Model):
     iban_hash = db.Column(db.String(64), unique=True, nullable=True) #SHA-256 hash of IBAN for duplicate checking
 
     data_registrazione = db.Column(db.DateTime, default=datetime.now(timezone.utc))
-    request_id = db.Column(db.String(255), unique=True)
+    # Request_ID removed from User table constraints as it is now handled by the RequestCache table
 
     @property
     def iban(self):
@@ -52,6 +52,19 @@ class User(db.Model):
             'cognome': self.cognome,
             'codice_fiscale': self.codice_fiscale,
             'iban': self.iban, #Decrypted
-            'data_registrazione': self.data_registrazione.isoformat() if self.data_registrazione else None,
-            'request_id': self.request_id
+            'data_registrazione': self.data_registrazione.isoformat() if self.data_registrazione else None
         }
+
+# Cache Table
+class RequestCache(db.Model):
+    __tablename__ = 'request_cache'
+
+    # Composite Key Hash (Client_ID + Request_ID)
+    id = db.Column(db.String(64), primary_key=True)
+
+    # Cached Response Data
+    response_body = db.Column(db.Text, nullable=False) # JSON body of the response
+    response_code = db.Column(db.Integer, nullable=False) # HTTP Status Code (e.g., 201)
+
+    # Timestamp for TTL (Time-To-Live) management
+    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
