@@ -205,8 +205,8 @@ def register_user(): #We register a new user with at-most-once policy. The clien
 
         # Rare case: Race condition on Request Cache insertion
         if 'request_cache' in error_msg:
-             # If we hit here, another thread just finished processing this request.
-             # We should try to fetch the cached response.
+             # If we hit here, another concurrent request from the same client with the same Request ID
+             # was processed just before us. This means we can safely return the cached response.
              cached = db.session.get(RequestCache, idempotency_key)
              if cached:
                  return jsonify(json.loads(cached.response_body)), cached.response_code
