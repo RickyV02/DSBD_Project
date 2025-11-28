@@ -42,6 +42,7 @@ def clean_request_cache():
         with app.app_context():
             try:
                 # If a request is retried after 5 minutes, it's treated as a new attempt.
+                # Cache entries older than 5 minutes are deleted.
                 expiration_time = datetime.now(timezone.utc) - timedelta(minutes=5)
 
                 deleted = db.session.execute(
@@ -112,6 +113,9 @@ def register_user(): #We register a new user with at-most-once policy. The clien
         req_id_input = request.headers.get('X-Request-ID') or data.get('request_id')
 
         if req_id_input:
+            # Client provided a Request ID: must be a valid UUID.
+            if not is_valid_uuid(req_id_input):
+                return jsonify({"error": "X-Request-ID/header 'request_id' must be a valid UUID"}), 400
             request_id = str(req_id_input)
         else:
             # Fallback: Hash of the FULL FORM data.

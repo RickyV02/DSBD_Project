@@ -1,5 +1,7 @@
 import requests
 import os
+import threading
+import time
 from datetime import datetime, timedelta
 
 class OpenSkyClient:
@@ -11,29 +13,47 @@ class OpenSkyClient:
         self.client_secret = os.getenv('CLIENT_SECRET')
 
         self.token = None
-        self.authenticate()
+        self.token_expiry = 0
 
-    def authenticate(self):
-        print("Richiesta nuovo Token di accesso a OpenSky...", flush=True)
+        # Thread safety lock for authentication to prevent race conditions
+        self._auth_lock = threading.Lock()
+
+    def _perform_login(self):
+        print(f"[Thread {threading.current_thread().name}] Richiesta nuovo Token di accesso a OpenSky...", flush=True)
         payload = {
             'grant_type': 'client_credentials',
             'client_id': self.client_id,
             'client_secret': self.client_secret
         }
         try:
-            response = requests.post(self.auth_url, data=payload)
+            response = requests.post(self.auth_url, data=payload, timeout=10)
             if response.status_code == 200:
-                self.token = response.json().get('access_token')
-                print("Token ottenuto con successo!", flush=True)
+                data = response.json()
+                self.token = data.get('access_token')
+                expires_in = data.get('expires_in', 1800)
+                self.token_expiry = time.time() + expires_in - 120  # Refresh 2 minutes before expiry
+                print(f"Token ottenuto con successo! Scade tra {expires_in}s.", flush=True)
             else:
                 print(f"Errore Autenticazione: {response.status_code} - {response.text}", flush=True)
                 self.token = None
         except Exception as e:
             print(f"Errore connessione Auth: {e}", flush=True)
 
+    def _is_token_expired(self):
+        return self.token is None or time.time() > self.token_expiry
+
     def get_headers(self):
-        if not self.token:
-            self.authenticate()
+        # First check (non-blocking read)
+        if self._is_token_expired():
+            print(f"[Thread {threading.current_thread().name}] Token è scaduto/mancante. Provo a rinnovare...", flush=True)
+
+            with self._auth_lock:
+                # Double Check: Verify again in case another thread refreshed it while we waited
+                if self._is_token_expired():
+                    self._perform_login()
+                else:
+                    print(f"[Thread {threading.current_thread().name}] Token già rinnovato da un altro thread! Procedo.", flush=True)
+
         return {'Authorization': f'Bearer {self.token}'}
 
     def get_departures(self, airport_icao, begin_timestamp=None, end_timestamp=None):
@@ -47,18 +67,33 @@ class OpenSkyClient:
 
         try:
             print(f"Recupero partenze da {airport_icao}...", flush=True)
+            # We call get_headers() which handles token refresh automatically
             response = requests.get(url, params=params, headers=self.get_headers(), timeout=30)
 
             if response.status_code == 200:
                 flights = response.json()
                 return flights
+
             elif response.status_code == 401:
-                print("Token scaduto! Rinnovo e riprovo...", flush=True)
-                self.authenticate()
-                return self.get_departures(airport_icao, begin_timestamp, end_timestamp) # Retry after re-authentication
+                # 401 Explicitly means Token Expired or Invalid.
+                print(f"401 Unauthorized per {airport_icao}. Token scaduto o non valido. Forzo aggiornamento...", flush=True)
+
+                # Set token to None to ensure _perform_login is called next time
+                self.token = None
+
+                # Recursive retry (the next call will trigger get_headers -> login)
+                return self.get_departures(airport_icao, begin_timestamp, end_timestamp)
+
             elif response.status_code == 404:
                 print(f"Nessun dato trovato per {airport_icao}", flush=True)
                 return []
+
+            elif response.status_code == 429:
+                # Rate Limiting handling
+                print(f"RATE LIMIT EXCEEDED per {airport_icao}. Attendo 60 secondi...", flush=True)
+                time.sleep(60)
+                return []
+
             else:
                 print(f"Errore API: {response.status_code}", flush=True)
                 return []
@@ -82,11 +117,20 @@ class OpenSkyClient:
             if response.status_code == 200:
                 flights = response.json()
                 return flights
+
             elif response.status_code == 401:
-                self.authenticate()
-                return self.get_arrivals(airport_icao, begin_timestamp, end_timestamp) # Retry after re-authentication
+                print(f"401 Unauthorized per {airport_icao}. Token scaduto. Forzo aggiornamento...", flush=True)
+                self.token = None
+                return self.get_arrivals(airport_icao, begin_timestamp, end_timestamp)
+
             elif response.status_code == 404:
                 return []
+
+            elif response.status_code == 429:
+                print(f"RATE LIMIT EXCEEDED per {airport_icao}. Attendo 60 secondi...", flush=True)
+                time.sleep(60)
+                return []
+
             else:
                 print(f"Errore API: {response.status_code}", flush=True)
                 return []
@@ -97,6 +141,9 @@ class OpenSkyClient:
     def get_flights_for_airport(self, airport_icao, begin_timestamp=None, end_timestamp=None):
 
         departures = self.get_departures(airport_icao, begin_timestamp, end_timestamp)
+
+        time.sleep(0.5)
+
         arrivals = self.get_arrivals(airport_icao, begin_timestamp, end_timestamp)
 
         return {

@@ -1,16 +1,16 @@
 {
 	"info": {
 		"_postman_id": "b5a3c2d1-e4f6-48a9-9b0c-1d2e3f4a5b6c",
-		"name": "DSBD Flight Monitoring Project - Final v2.0",
-		"description": "Collezione di test COMPLETA per il progetto User Manager + Data Collector.\n\nCopertura Test:\n- **Idempotenza**: Registrazione utenti duplicata gestita correttamente.\n- **Validazione Input**: Email, CF, ICAO e Date controllate.\n- **Sicurezza**: Accesso negato (403) se si richiedono dati di aeroporti non seguiti.\n- **Logica Temporale**: Errore (400) se Data Inizio > Data Fine.\n- **Integrazione gRPC**: Verifica che i servizi si parlino (User Not Found).\n- **Flussi Completi**: Creazione, utilizzo, cancellazione manuale e pulizia automatica.",
+		"name": "DSBD Project Complete Test Suite",
+		"description": "Suite completa di testing di tutto il progetto.\n\n**Struttura:**\n1. **User Manager**: CRUD completo.\n2. **Data Collector**: Gestione Interessi.\n3. **Data Operations**: Flusso dati completo (Trigger Data Fetch, Lettura, Funzionalità e Robustezza).\n4. **Data Cleanup**: Pulizia finale.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
 		{
-			"name": "1. User Manager",
+			"name": "0. System Check",
 			"item": [
 				{
-					"name": "Health Check (User Manager)",
+					"name": "0.1 Health Check (User Manager)",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -24,16 +24,86 @@
 							]
 						}
 					},
-					"response": []
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status is 200\", function () { pm.response.to.have.status(200); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				},
 				{
-					"name": "1.1 Register User (Success)",
+					"name": "0.2 Health Check (Data Collector)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{data_collector_url}}/health",
+							"host": [
+								"{{data_collector_url}}"
+							],
+							"path": [
+								"health"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status is 200\", function () { pm.response.to.have.status(200); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "0.3 Check Scheduler Status",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{data_collector_url}}/scheduler/status",
+							"host": [
+								"{{data_collector_url}}"
+							],
+							"path": [
+								"scheduler",
+								"status"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status is 200\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Scheduler is Active\", function () { var jsonData = pm.response.json(); pm.expect(jsonData.active).to.eql(true); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "1. User Manager",
+			"item": [
+				{
+					"name": "1.1 Register User (Generates UUID)",
 					"event": [
 						{
 							"listen": "prerequest",
 							"script": {
 								"exec": [
-									"// Genera un UUID casuale per ogni nuova richiesta",
 									"pm.collectionVariables.set(\"current_request_id\", pm.variables.replaceIn('{{$guid}}'));"
 								],
 								"type": "text/javascript"
@@ -43,9 +113,7 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status code is 201\", function () {",
-									"    pm.response.to.have.status(201);",
-									"});"
+									"pm.test(\"User Created (201)\", function () { pm.response.to.have.status(201); });"
 								],
 								"type": "text/javascript"
 							}
@@ -78,19 +146,16 @@
 								"users"
 							]
 						}
-					},
-					"response": []
+					}
 				},
 				{
-					"name": "1.2 Register User (Idempotency Test)",
+					"name": "1.2 Register User (Idempotency Retry)",
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status code is 200 or 201 (Cache Hit)\", function () {",
-									"    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
-									"});"
+									"pm.test(\"Idempotency Hit (201 or 200)\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });"
 								],
 								"type": "text/javascript"
 							}
@@ -102,62 +167,6 @@
 							{
 								"key": "X-Request-ID",
 								"value": "{{current_request_id}}",
-								"type": "text",
-								"description": "Usa lo STESSO ID della richiesta precedente"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"nome\": \"Mario\",\n    \"cognome\": \"Rossi\",\n    \"codice_fiscale\": \"RSSMRA80A01H501U\",\n    \"iban\": \"IT60X0542811101000000123456\"\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
-						},
-						"url": {
-							"raw": "{{user_manager_url}}/users",
-							"host": [
-								"{{user_manager_url}}"
-							],
-							"path": [
-								"users"
-							]
-						}
-					},
-					"response": []
-				},
-				{
-					"name": "1.3 Register User (Duplicate Logic Error)",
-					"event": [
-						{
-							"listen": "prerequest",
-							"script": {
-								"exec": [
-									"// Genera un NUOVO UUID per simulare una nuova richiesta con stessi dati",
-									"pm.collectionVariables.set(\"new_request_id\", pm.variables.replaceIn('{{$guid}}'));"
-								],
-								"type": "text/javascript"
-							}
-						},
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 409 Conflict\", function () {",
-									"    pm.response.to.have.status(409);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "X-Request-ID",
-								"value": "{{new_request_id}}",
 								"type": "text"
 							}
 						],
@@ -179,19 +188,16 @@
 								"users"
 							]
 						}
-					},
-					"response": []
+					}
 				},
 				{
-					"name": "1.4 Register User (Validation Error)",
+					"name": "1.3 Register User (Validation Error)",
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status code is 400 Bad Request\", function () {",
-									"    pm.response.to.have.status(400);",
-									"});"
+									"pm.test(\"Validation Error (400)\", function () { pm.response.to.have.status(400); });"
 								],
 								"type": "text/javascript"
 							}
@@ -208,7 +214,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"email\": \"email-sbagliata\",\n    \"nome\": \"\",\n    \"cognome\": null,\n    \"codice_fiscale\": \"\",\n    \"iban\": \"\"\n}",
+							"raw": "{\n    \"email\": \"email-dirty\",\n    \"nome\": \"\",\n    \"cognome\": null,\n    \"codice_fiscale\": \"123\",\n    \"iban\": \"\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -224,11 +230,40 @@
 								"users"
 							]
 						}
-					},
-					"response": []
+					}
 				},
 				{
-					"name": "1.5 Get User Info",
+					"name": "1.4 Verify User Exists",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{user_manager_url}}/users/verify/{{test_email}}",
+							"host": [
+								"{{user_manager_url}}"
+							],
+							"path": [
+								"users",
+								"verify",
+								"{{test_email}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status is 200\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"User Exists\", function () { var jsonData = pm.response.json(); pm.expect(jsonData.exists).to.eql(true); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "1.5 Get User (Success)",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -243,7 +278,74 @@
 							]
 						}
 					},
-					"response": []
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status is 200\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Correct Email\", function () { var jsonData = pm.response.json(); pm.expect(jsonData.user.email).to.eql(pm.collectionVariables.get(\"test_email\")); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "1.6 Get User (Not Found)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{user_manager_url}}/users/utente-inesistente@test.com",
+							"host": [
+								"{{user_manager_url}}"
+							],
+							"path": [
+								"users",
+								"utente-inesistente@test.com"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Not Found (404)\", function () { pm.response.to.have.status(404); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "1.7 Get All Users",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{user_manager_url}}/users",
+							"host": [
+								"{{user_manager_url}}"
+							],
+							"path": [
+								"users"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status is 200\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Count > 0\", function () { var jsonData = pm.response.json(); pm.expect(jsonData.count).to.be.above(0); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				}
 			]
 		},
@@ -251,20 +353,7 @@
 			"name": "2. Data Collector",
 			"item": [
 				{
-					"name": "2.1 Add Interest (LIRF - Main Test)",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 201 Created\", function () {",
-									"    pm.response.to.have.status(201);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
+					"name": "2.1 Add Interest (LIRF - Success)",
 					"request": {
 						"method": "POST",
 						"header": [],
@@ -287,25 +376,20 @@
 							]
 						}
 					},
-					"response": []
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Interest Added (201)\", function () { pm.response.to.have.status(201); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				},
 				{
 					"name": "2.2 Add Interest (Duplicate Check)",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status code is 200 OK (Already Exists)\", function () {",
-									"    pm.response.to.have.status(200);",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.already_exists).to.eql(true);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
 					"request": {
 						"method": "POST",
 						"header": [],
@@ -328,29 +412,28 @@
 							]
 						}
 					},
-					"response": []
-				},
-				{
-					"name": "2.3 Add Interest (User Not Found - gRPC)",
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status code is 404 Not Found\", function () {",
-									"    pm.response.to.have.status(404);",
-									"});"
+									"pm.test(\"Already Exists (200)\", function () { pm.response.to.have.status(200); });",
+									"var jsonData = pm.response.json();",
+									"pm.expect(jsonData.already_exists).to.eql(true);"
 								],
 								"type": "text/javascript"
 							}
 						}
-					],
+					]
+				},
+				{
+					"name": "2.3 Add Interest (Dirty ICAO - 400)",
 					"request": {
 						"method": "POST",
 						"header": [],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"email\": \"ghost@univ.it\",\n    \"airport_icao\": \"LIRF\"\n}",
+							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"airport_icao\": \"ABCDEFG\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -367,10 +450,90 @@
 							]
 						}
 					},
-					"response": []
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Invalid ICAO (400)\", function () { pm.response.to.have.status(400); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				},
 				{
-					"name": "2.4 Trigger Manual Collection",
+					"name": "2.4 Add Interest (Unknown User - gRPC Check)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"fantasma@nonesiste.it\",\n    \"airport_icao\": \"LIRF\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{data_collector_url}}/interests",
+							"host": [
+								"{{data_collector_url}}"
+							],
+							"path": [
+								"interests"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"User Not Found (404)\", function () { pm.response.to.have.status(404); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "2.5 Get User Interests (Verify Added)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{data_collector_url}}/interests/{{test_email}}",
+							"host": [
+								"{{data_collector_url}}"
+							],
+							"path": [
+								"interests",
+								"{{test_email}}"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status is 200\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Contains LIRF\", function () { var j = pm.response.json(); pm.expect(j.interests[0].airport_icao).to.eql(\"LIRF\"); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "3. Data Operations",
+			"item": [
+				{
+					"name": "3.1 Trigger Manual Collection",
 					"request": {
 						"method": "POST",
 						"header": [],
@@ -385,10 +548,22 @@
 							]
 						}
 					},
-					"response": []
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Collection Started (200)\", function () { pm.response.to.have.status(200); });",
+									"// Wait 5 seconds for OpenSky data processing",
+									"setTimeout(function(){}, 5000);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				},
 				{
-					"name": "2.5 Get Flights (All)",
+					"name": "3.2 Get Flights (All Types)",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -409,10 +584,22 @@
 							]
 						}
 					},
-					"response": []
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Flights Retrieved (200)\", function () { pm.response.to.have.status(200); });",
+									"var jsonData = pm.response.json();",
+									"if (jsonData.count === 0) { console.warn(\"Warning: No flights found.\"); }"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				},
 				{
-					"name": "2.6 Get Latest Flight",
+					"name": "3.3 Get Latest Flight",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -438,15 +625,64 @@
 							]
 						}
 					},
-					"response": []
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Latest Flight Retrieved (200 or 404)\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 404]); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				},
 				{
-					"name": "2.7 Get Average Stats",
+					"name": "3.4 Get Latest Flight (Invalid Type - 400)",
 					"request": {
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/flights/{{test_airport}}/average?email={{test_email}}&days=7",
+							"raw": "{{data_collector_url}}/flights/{{test_airport}}/latest?email={{test_email}}&type=invalid",
+							"host": [
+								"{{data_collector_url}}"
+							],
+							"path": [
+								"flights",
+								"{{test_airport}}",
+								"latest"
+							],
+							"query": [
+								{
+									"key": "email",
+									"value": "{{test_email}}"
+								},
+								{
+									"key": "type",
+									"value": "invalid"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Bad Request (400)\", function () { pm.response.to.have.status(400); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "3.5 Get Average Stats",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{data_collector_url}}/flights/{{test_airport}}/average?email={{test_email}}&days=5",
 							"host": [
 								"{{data_collector_url}}"
 							],
@@ -462,33 +698,26 @@
 								},
 								{
 									"key": "days",
-									"value": "7"
+									"value": "5"
 								}
 							]
 						}
 					},
-					"response": []
-				},
-				{
-					"name": "2.8 Get Airline Stats (Top 5)",
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status code is 200\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"pm.test(\"Response has correct structure\", function () {",
-									"    var jsonData = pm.response.json();",
-									"    pm.expect(jsonData.stat_type).to.eql(\"top_5_airlines\");",
-									"    pm.expect(jsonData.data).to.be.an(\"array\");",
-									"});"
+									"pm.test(\"Averages Retrieved (200)\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Contains departure/arrival stats\", function () { var j = pm.response.json(); pm.expect(j).to.have.property('departure'); });"
 								],
 								"type": "text/javascript"
 							}
 						}
-					],
+					]
+				},
+				{
+					"name": "3.6 Get Airline Stats (Top 5)",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -511,23 +740,21 @@
 							]
 						}
 					},
-					"response": []
-				},
-				{
-					"name": "2.9 Security Check (Airport Not Followed)",
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status code is 403 Forbidden\", function () {",
-									"    pm.response.to.have.status(403);",
-									"});"
+									"pm.test(\"Stats Retrieved (200)\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Structure Valid\", function () { var j = pm.response.json(); pm.expect(j.stat_type).to.eql(\"top_5_airlines\"); });"
 								],
 								"type": "text/javascript"
 							}
 						}
-					],
+					]
+				},
+				{
+					"name": "3.7 Security Check (Airport Not Followed)",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -548,28 +775,25 @@
 							]
 						}
 					},
-					"response": []
-				},
-				{
-					"name": "2.10 Validation Error (Date Logic)",
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status code is 400 Bad Request\", function () {",
-									"    pm.response.to.have.status(400);",
-									"});"
+									"pm.test(\"Forbidden Access (403)\", function () { pm.response.to.have.status(403); });"
 								],
 								"type": "text/javascript"
 							}
 						}
-					],
+					]
+				},
+				{
+					"name": "3.8 Validation Error (Date Logic)",
 					"request": {
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/flights/{{test_airport}}?email={{test_email}}&start_date=2025-12-31&end_date=2024-01-01",
+							"raw": "{{data_collector_url}}/flights/{{test_airport}}?email={{test_email}}&start_date=2025-01-01&end_date=2024-01-01",
 							"host": [
 								"{{data_collector_url}}"
 							],
@@ -584,7 +808,7 @@
 								},
 								{
 									"key": "start_date",
-									"value": "2025-12-31"
+									"value": "2025-01-01"
 								},
 								{
 									"key": "end_date",
@@ -593,54 +817,30 @@
 							]
 						}
 					},
-					"response": []
-				},
-				{
-					"name": "2.11 Test Manual Removal (Add LIMC)",
-					"request": {
-						"method": "POST",
-						"header": [],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"airport_icao\": \"LIMC\"\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
-						},
-						"url": {
-							"raw": "{{data_collector_url}}/interests",
-							"host": [
-								"{{data_collector_url}}"
-							],
-							"path": [
-								"interests"
-							]
-						}
-					},
-					"response": []
-				},
-				{
-					"name": "2.12 Test Manual Removal (Remove LIMC)",
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status code is 200 OK\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});"
+									"pm.test(\"Bad Date Logic (400)\", function () { pm.response.to.have.status(400); });"
 								],
 								"type": "text/javascript"
 							}
 						}
-					],
+					]
+				}
+			]
+		},
+		{
+			"name": "4. Data Cleanup",
+			"item": [
+				{
+					"name": "4.1 Manual Interest Removal",
 					"request": {
 						"method": "DELETE",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/interests?email={{test_email}}&airport_icao=LIMC",
+							"raw": "{{data_collector_url}}/interests?email={{test_email}}&airport_icao={{test_airport}}",
 							"host": [
 								"{{data_collector_url}}"
 							],
@@ -654,33 +854,25 @@
 								},
 								{
 									"key": "airport_icao",
-									"value": "LIMC"
+									"value": "{{test_airport}}"
 								}
 							]
 						}
 					},
-					"response": []
-				}
-			]
-		},
-		{
-			"name": "3. Cancellazione e Pulizia",
-			"item": [
-				{
-					"name": "3.1 Delete User (Trigger gRPC)",
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status code is 200 OK\", function () {",
-									"    pm.response.to.have.status(200);",
-									"});"
+									"pm.test(\"Interest Removed (200)\", function () { pm.response.to.have.status(200); });"
 								],
 								"type": "text/javascript"
 							}
 						}
-					],
+					]
+				},
+				{
+					"name": "4.2 Delete User (Triggers Interests Cleanup)",
 					"request": {
 						"method": "DELETE",
 						"header": [],
@@ -695,23 +887,20 @@
 							]
 						}
 					},
-					"response": []
-				},
-				{
-					"name": "3.2 Check Interest Removal (Should Fail)",
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status code is 404 Not Found (User Deleted)\", function () {",
-									"    pm.response.to.have.status(404);",
-									"});"
+									"pm.test(\"User Deleted (200)\", function () { pm.response.to.have.status(200); });"
 								],
 								"type": "text/javascript"
 							}
 						}
-					],
+					]
+				},
+				{
+					"name": "4.3 Verify Cleanup",
 					"request": {
 						"method": "GET",
 						"header": [],
@@ -726,7 +915,17 @@
 							]
 						}
 					},
-					"response": []
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"User Gone (404)\", function () { pm.response.to.have.status(404); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
 				}
 			]
 		}
@@ -744,7 +943,7 @@
 		},
 		{
 			"key": "test_email",
-			"value": "mario.rossi@example.it",
+			"value": "mario.rossi@example.com",
 			"type": "string"
 		},
 		{

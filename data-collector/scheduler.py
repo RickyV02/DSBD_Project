@@ -46,6 +46,8 @@ class DataCollectorScheduler:
                         db.session.commit()
                         if deleted.rowcount > 0:
                             print(f"Pulizia completata: rimossi {deleted.rowcount} voli.", flush=True)
+                        else:
+                            print("Nessun volo da pulire.", flush=True)
                 except Exception as e:
                     db.session.rollback()
                     print(f"Errore durante la pulizia voli: {e}", flush=True)
