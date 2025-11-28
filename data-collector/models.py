@@ -7,7 +7,7 @@ class UserInterest(db.Model):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     user_email = db.Column(db.String(255), nullable=False)
     airport_icao = db.Column(db.String(10), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (db.UniqueConstraint('user_email', 'airport_icao', name='unique_user_interest'),)
 
@@ -37,7 +37,7 @@ class FlightData(db.Model):
     departure_airport_candidates_count = db.Column(db.Integer)
     arrival_airport_candidates_count = db.Column(db.Integer)
     flight_type = db.Column(db.String(20))
-    collected_at = db.Column(db.DateTime, default=datetime.now(timezone.utc), index=True)
+    collected_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
     __table_args__ = (db.UniqueConstraint('icao24', 'first_seen', 'airport_icao', name='unique_flight'),)
 

@@ -1,8 +1,8 @@
 {
 	"info": {
 		"_postman_id": "b5a3c2d1-e4f6-48a9-9b0c-1d2e3f4a5b6c",
-		"name": "DSBD Flight Monitoring Project - Final",
-		"description": "Collezione di test COMPLETA per il progetto User Manager + Data Collector.\nInclude test per:\n- Registrazione Utente (At-Most-Once con UUID)\n- Gestione Interessi e gRPC\n- Raccolta Dati\n- Consultazione Voli\n- Cancellazione e Pulizia Automatica",
+		"name": "DSBD Flight Monitoring Project - Final v2.0",
+		"description": "Collezione di test COMPLETA per il progetto User Manager + Data Collector.\n\nCopertura Test:\n- **Idempotenza**: Registrazione utenti duplicata gestita correttamente.\n- **Validazione Input**: Email, CF, ICAO e Date controllate.\n- **Sicurezza**: Accesso negato (403) se si richiedono dati di aeroporti non seguiti.\n- **Logica Temporale**: Errore (400) se Data Inizio > Data Fine.\n- **Integrazione gRPC**: Verifica che i servizi si parlino (User Not Found).\n- **Flussi Completi**: Creazione, utilizzo, cancellazione manuale e pulizia automatica.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -251,7 +251,7 @@
 			"name": "2. Data Collector",
 			"item": [
 				{
-					"name": "2.1 Add Interest (LIRF)",
+					"name": "2.1 Add Interest (LIRF - Main Test)",
 					"event": [
 						{
 							"listen": "test",
@@ -468,6 +468,198 @@
 						}
 					},
 					"response": []
+				},
+				{
+					"name": "2.8 Get Airline Stats (Top 5)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"pm.test(\"Response has correct structure\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.stat_type).to.eql(\"top_5_airlines\");",
+									"    pm.expect(jsonData.data).to.be.an(\"array\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{data_collector_url}}/flights/{{test_airport}}/stats/airlines?email={{test_email}}",
+							"host": [
+								"{{data_collector_url}}"
+							],
+							"path": [
+								"flights",
+								"{{test_airport}}",
+								"stats",
+								"airlines"
+							],
+							"query": [
+								{
+									"key": "email",
+									"value": "{{test_email}}"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "2.9 Security Check (Airport Not Followed)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 403 Forbidden\", function () {",
+									"    pm.response.to.have.status(403);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{data_collector_url}}/flights/LIMC?email={{test_email}}",
+							"host": [
+								"{{data_collector_url}}"
+							],
+							"path": [
+								"flights",
+								"LIMC"
+							],
+							"query": [
+								{
+									"key": "email",
+									"value": "{{test_email}}"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "2.10 Validation Error (Date Logic)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 400 Bad Request\", function () {",
+									"    pm.response.to.have.status(400);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{data_collector_url}}/flights/{{test_airport}}?email={{test_email}}&start_date=2025-12-31&end_date=2024-01-01",
+							"host": [
+								"{{data_collector_url}}"
+							],
+							"path": [
+								"flights",
+								"{{test_airport}}"
+							],
+							"query": [
+								{
+									"key": "email",
+									"value": "{{test_email}}"
+								},
+								{
+									"key": "start_date",
+									"value": "2025-12-31"
+								},
+								{
+									"key": "end_date",
+									"value": "2024-01-01"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "2.11 Test Manual Removal (Add LIMC)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"airport_icao\": \"LIMC\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{data_collector_url}}/interests",
+							"host": [
+								"{{data_collector_url}}"
+							],
+							"path": [
+								"interests"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "2.12 Test Manual Removal (Remove LIMC)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 OK\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{data_collector_url}}/interests?email={{test_email}}&airport_icao=LIMC",
+							"host": [
+								"{{data_collector_url}}"
+							],
+							"path": [
+								"interests"
+							],
+							"query": [
+								{
+									"key": "email",
+									"value": "{{test_email}}"
+								},
+								{
+									"key": "airport_icao",
+									"value": "LIMC"
+								}
+							]
+						}
+					},
+					"response": []
 				}
 			]
 		},
@@ -552,7 +744,7 @@
 		},
 		{
 			"key": "test_email",
-			"value": "mario.rossi@univ.it",
+			"value": "mario.rossi@example.it",
 			"type": "string"
 		},
 		{

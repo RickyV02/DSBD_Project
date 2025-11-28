@@ -21,7 +21,7 @@ class DataCollectorScheduler:
             try:
                 print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Avvio raccolta dati periodica...", flush=True)
 
-                # Fetch ACTIVE airports (current user interests)
+                # Fetch ACTIVE airports (current users' interests)
                 query = select(UserInterest.airport_icao).distinct()
                 airports_query = db.session.execute(query).scalars().all()
                 active_airports = list(airports_query)

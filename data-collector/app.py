@@ -67,6 +67,10 @@ def add_interest():
         email = str(data['email']).strip().lower()
         airport_icao = str(data['airport_icao']).strip().upper()
 
+        # VALIDATION: ICAO Format (4 alphanumeric chars)
+        if len(airport_icao) != 4 or not airport_icao.isalnum():
+             return jsonify({"error": "Formato Codice ICAO non valido. Deve essere di 4 caratteri (es. LIRF)"}), 400
+
         if not is_valid_email(email):
             return jsonify({"error": "Formato email non valido"}), 400
 
@@ -144,6 +148,10 @@ def remove_interest():
         if not is_valid_email(email):
              return jsonify({"error": "Formato email non valido"}), 400
 
+        # VALIDATION: ICAO Format
+        if len(airport_icao) != 4 or not airport_icao.isalnum():
+             return jsonify({"error": "Formato Codice ICAO non valido (4 caratteri richiesti)"}), 400
+
         exists, message = user_manager_client.verify_user(email)
         if not exists:
             return jsonify({
@@ -180,6 +188,10 @@ def get_flights(airport_icao):
         clean_email = email.strip().lower()
         clean_icao = airport_icao.strip().upper()
 
+        # VALIDATION: ICAO Format
+        if len(clean_icao) != 4 or not clean_icao.isalnum():
+             return jsonify({"error": "Formato Codice ICAO non valido (4 caratteri richiesti)"}), 400
+
         if not is_valid_email(clean_email):
              return jsonify({"error": "Formato email non valido"}), 400
 
@@ -197,14 +209,15 @@ def get_flights(airport_icao):
                 "error": "Aeroporto non tra gli interessi dell'utente"
             }), 403
 
-        flight_type = request.args.get('type') # Could be None, or 'departure' or 'arrival' (even a string not valid, like "pippo")
+        flight_type = request.args.get('type') # Could be None, or 'departure' or 'arrival'
+        start_date_str = request.args.get('start_date') # YYYY-MM-DD
+        end_date_str = request.args.get('end_date') # YYYY-MM-DD
+        limit = int(request.args.get('limit', 100)) # default to 100
 
         if flight_type and flight_type not in ['departure', 'arrival']:
             return jsonify({"error": "Il parametro type, se presente, deve essere 'departure' o 'arrival'"}), 400
 
-        limit = int(request.args.get('limit', 100)) # if not provided, default to 100
-
-        # Fix: Enforce a hard limit to prevent DoS attacks (Database overload)
+        # Fix: Enforce a hard limit to prevent DoS attacks
         if limit > 1000:
             limit = 1000
 
@@ -213,12 +226,38 @@ def get_flights(airport_icao):
         if flight_type:
             query = query.filter_by(flight_type=flight_type)
 
+        start_date = None
+        end_date = None
+
+        if start_date_str:
+            try:
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+                query = query.filter(FlightData.collected_at >= start_date)
+            except ValueError:
+                return jsonify({"error": "Formato start_date non valido. Usa YYYY-MM-DD"}), 400
+
+        if end_date_str:
+            try:
+                end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+                end_date_inclusive = end_date.replace(hour=23, minute=59, second=59)
+                query = query.filter(FlightData.collected_at <= end_date_inclusive)
+            except ValueError:
+                return jsonify({"error": "Formato end_date non valido. Usa YYYY-MM-DD"}), 400
+
+        if start_date and end_date and start_date > end_date:
+             return jsonify({"error": "La data di inizio non può essere successiva alla data di fine"}), 400
+
         flights = db.session.execute(query.order_by(FlightData.collected_at.desc()).limit(limit)).scalars().all()
 
         return jsonify({
             "airport_icao": clean_icao,
             "flights": [f.to_dict() for f in flights],
-            "count": len(flights)
+            "count": len(flights),
+            "filters": {
+                "type": flight_type,
+                "start_date": start_date_str,
+                "end_date": end_date_str
+            }
         }), 200
 
     except Exception as e:
@@ -238,6 +277,10 @@ def get_latest_flight(airport_icao):
 
         clean_email = email.strip().lower()
         clean_icao = airport_icao.strip().upper()
+
+        # VALIDATION: ICAO Format
+        if len(clean_icao) != 4 or not clean_icao.isalnum():
+             return jsonify({"error": "Formato Codice ICAO non valido (4 caratteri richiesti)"}), 400
 
         if not is_valid_email(clean_email):
              return jsonify({"error": "Formato email non valido"}), 400
@@ -307,6 +350,10 @@ def get_average_flights(airport_icao):
         clean_email = email.strip().lower()
         clean_icao = airport_icao.strip().upper()
 
+        # VALIDATION: ICAO Format
+        if len(clean_icao) != 4 or not clean_icao.isalnum():
+             return jsonify({"error": "Formato Codice ICAO non valido (4 caratteri richiesti)"}), 400
+
         if not is_valid_email(clean_email):
              return jsonify({"error": "Formato email non valido"}), 400
 
@@ -360,6 +407,66 @@ def get_average_flights(airport_icao):
 
     except Exception as e:
         return jsonify({"error": f"Errore: {str(e)}"}), 500
+
+@app.route('/flights/<airport_icao>/stats/airlines', methods=['GET'])
+def get_airline_stats(airport_icao):
+    try:
+        email = request.args.get('email')
+        if not email:
+            return jsonify({"error": "Parametro 'email' obbligatorio"}), 400
+
+        clean_email = email.strip().lower()
+        clean_icao = airport_icao.strip().upper()
+
+        if len(clean_icao) != 4 or not clean_icao.isalnum():
+             return jsonify({"error": "Formato Codice ICAO non valido (4 caratteri richiesti)"}), 400
+
+        if not is_valid_email(clean_email):
+             return jsonify({"error": "Formato email non valido"}), 400
+
+        exists, message = user_manager_client.verify_user(clean_email)
+        if not exists:
+            return jsonify({"error": "Utente non trovato", "message": message}), 404
+
+        interest = db.session.execute(db.select(UserInterest).filter_by(user_email=clean_email, airport_icao=clean_icao)).scalar_one_or_none()
+        if not interest:
+            return jsonify({"error": "Aeroporto non tra gli interessi dell'utente"}), 403
+
+        # We get the top 5 airlines by number of recorded flights (airlines means unique callsign prefixes, like 'AAL' for American Airlines)
+
+        airline_code = func.substr(FlightData.callsign, 1, 3)
+
+        query = db.session.query(
+            airline_code.label('airline'),
+            func.count().label('flight_count')
+        ).filter(
+            FlightData.airport_icao == clean_icao,
+            FlightData.callsign != None,
+            FlightData.callsign != ''
+        ).group_by(
+            airline_code
+        ).order_by(
+            func.count().desc()
+        ).limit(5)
+
+        results = query.all()
+
+        stats = [
+            {
+                "airline_code": row.airline,
+                "flights_recorded": row.flight_count
+            }
+            for row in results
+        ]
+
+        return jsonify({
+            "airport_icao": clean_icao,
+            "stat_type": "top_5_airlines",
+            "data": stats
+        }), 200
+
+    except Exception as e:
+        return jsonify({"error": f"Errore nel calcolo statistiche: {str(e)}"}), 500
 
 @app.route('/collect/manual', methods=['POST'])
 def manual_collection():

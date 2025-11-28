@@ -36,18 +36,13 @@ class DataCollectorClient:
     def delete_interests(self, email):
         try:
             print(f"Invio richiesta gRPC cancellazione interessi per {email}...", flush=True)
-
             request = user_service_pb2.DeleteInterestsRequest(email=email)
-
             response = self.stub.DeleteInterests(request)
-
             if response.success:
                 print(f"Successo gRPC: {response.message}", flush=True)
             else:
                 print(f"Fallimento gRPC lato server: {response.message}", flush=True)
-
             return response.success, response.message
-
         except grpc.RpcError as e:
             print(f"Errore critico di connessione gRPC verso Data Collector: {e.details()}", flush=True)
             return False, str(e)
