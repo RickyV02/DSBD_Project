@@ -7,10 +7,6 @@ service UserService {
   rpc GetUser(GetUserRequest) returns (GetUserResponse);
 }
 
-service DataCollectorService {
-  rpc DeleteInterests(DeleteInterestsRequest) returns (DeleteInterestsResponse);
-}
-
 message VerifyUserRequest {
   string email = 1;
 }
@@ -31,13 +27,4 @@ message GetUserResponse {
   string codice_fiscale = 4;
   bool exists = 5;
   string iban = 6;
-}
-
-message DeleteInterestsRequest {
-  string email = 1;
-}
-
-message DeleteInterestsResponse {
-  bool success = 1;
-  string message = 2;
 }

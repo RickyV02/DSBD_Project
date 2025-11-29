@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package data_collector_service;
+
+service DataCollectorService {
+  rpc DeleteInterests(DeleteInterestsRequest) returns (DeleteInterestsResponse);
+}
+
+message DeleteInterestsRequest {
+  string email = 1;
+}
+
+message DeleteInterestsResponse {
+  bool success = 1;
+  string message = 2;
+}

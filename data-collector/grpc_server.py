@@ -1,11 +1,11 @@
 from concurrent import futures
 import grpc
-import user_service_pb2
-import user_service_pb2_grpc
+import data_collector_service_pb2
+import data_collector_service_pb2_grpc
 from database import db
 from models import UserInterest
 
-class DataCollectorServicer(user_service_pb2_grpc.DataCollectorServiceServicer):
+class DataCollectorServicer(data_collector_service_pb2_grpc.DataCollectorServiceServicer):
     def __init__(self, app):
         self.app = app
 
@@ -23,7 +23,7 @@ class DataCollectorServicer(user_service_pb2_grpc.DataCollectorServiceServicer):
                 msg = f"Cancellati {count} interessi per {request.email}."
                 print(msg, flush=True)
 
-                return user_service_pb2.DeleteInterestsResponse(
+                return data_collector_service_pb2.DeleteInterestsResponse(
                     success=True,
                     message=msg
                 )
@@ -31,7 +31,7 @@ class DataCollectorServicer(user_service_pb2_grpc.DataCollectorServiceServicer):
                 db.session.rollback()
                 error_msg = f"Errore durante la cancellazione interessi: {str(e)}"
                 print(error_msg, flush=True)
-                return user_service_pb2.DeleteInterestsResponse(
+                return data_collector_service_pb2.DeleteInterestsResponse(
                     success=False,
                     message=error_msg
                 )
@@ -39,7 +39,7 @@ class DataCollectorServicer(user_service_pb2_grpc.DataCollectorServiceServicer):
 def serve(app):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
 
-    user_service_pb2_grpc.add_DataCollectorServiceServicer_to_server(
+    data_collector_service_pb2_grpc.add_DataCollectorServiceServicer_to_server(
         DataCollectorServicer(app), server
     )
 

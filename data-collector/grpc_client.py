@@ -12,7 +12,7 @@ class UserManagerClient:
         service_config = {
             "methodConfig": [
                 {
-                    "name": [{"service": "UserService"}],
+                    "name": [{"service": "user_service.UserService"}],
                     "retryPolicy": {
                         "maxAttempts": 5,
                         "initialBackoff": "1s",

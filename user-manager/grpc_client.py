@@ -1,6 +1,6 @@
 import grpc
-import user_service_pb2
-import user_service_pb2_grpc
+import data_collector_service_pb2
+import data_collector_service_pb2_grpc
 import os
 import json
 
@@ -12,7 +12,7 @@ class DataCollectorClient:
         service_config = {
             "methodConfig": [
                 {
-                    "name": [{"service": "DataCollectorService"}],
+                    "name": [{"service": "data_collector_service.DataCollectorService"}],
                     "retryPolicy": {
                         "maxAttempts": 5,
                         "initialBackoff": "1s",
@@ -31,12 +31,12 @@ class DataCollectorClient:
 
         target = f'{self.host}:{self.port}'
         self.channel = grpc.insecure_channel(target, options=options)
-        self.stub = user_service_pb2_grpc.DataCollectorServiceStub(self.channel)
+        self.stub = data_collector_service_pb2_grpc.DataCollectorServiceStub(self.channel)
 
     def delete_interests(self, email):
         try:
             print(f"Invio richiesta gRPC cancellazione interessi per {email}...", flush=True)
-            request = user_service_pb2.DeleteInterestsRequest(email=email)
+            request = data_collector_service_pb2.DeleteInterestsRequest(email=email)
             response = self.stub.DeleteInterests(request)
             if response.success:
                 print(f"Successo gRPC: {response.message}", flush=True)
