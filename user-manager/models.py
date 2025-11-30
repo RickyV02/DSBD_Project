@@ -11,8 +11,8 @@ class User(db.Model):
     nome = db.Column(db.String(100), nullable=False)
     cognome = db.Column(db.String(100), nullable=False)
     codice_fiscale = db.Column(db.String(16), unique=True, nullable=False)
-    _iban = db.Column('iban', db.String(500), nullable=True) #Encrypted IBAN
-    iban_hash = db.Column(db.String(64), unique=True, nullable=True) #SHA-256 hash of IBAN for duplicate checking
+    _iban = db.Column('iban', db.String(500), nullable=False) #Encrypted IBAN
+    iban_hash = db.Column(db.String(64), unique=True, nullable=False) #SHA-256 hash of IBAN for duplicate checking
 
     data_registrazione = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     # Request_ID removed from User table constraints as it is now handled by the RequestCache table

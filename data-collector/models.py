@@ -24,8 +24,8 @@ class FlightData(db.Model):
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     airport_icao = db.Column(db.String(10), nullable=False, index=True)
-    icao24 = db.Column(db.String(50))
-    first_seen = db.Column(db.BigInteger)
+    icao24 = db.Column(db.String(50), nullable=False)
+    first_seen = db.Column(db.BigInteger, nullable=False)
     est_departure_airport = db.Column(db.String(10))
     last_seen = db.Column(db.BigInteger)
     est_arrival_airport = db.Column(db.String(10))
@@ -36,7 +36,7 @@ class FlightData(db.Model):
     est_arrival_airport_vert_distance = db.Column(db.Integer)
     departure_airport_candidates_count = db.Column(db.Integer)
     arrival_airport_candidates_count = db.Column(db.Integer)
-    flight_type = db.Column(db.String(20))
+    flight_type = db.Column(db.String(20), nullable=False)  # 'departure' or 'arrival'
     collected_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
     __table_args__ = (db.UniqueConstraint('icao24', 'first_seen', 'airport_icao', name='unique_flight'),)

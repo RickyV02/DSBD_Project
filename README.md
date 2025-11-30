@@ -20,25 +20,25 @@ flowchart TD
     subgraph Docker [Docker Environment]
         direction TB
 
-        subgraph UserNet [user-net]
+        subgraph UserNet [ ]
             direction TB
             UM[User Manager<br>REST :5000 / gRPC :50051]
             UDB[(User DB<br>MySQL :3306)]
-            UM --> UDB
+            UM --> |via user-net| UDB
         end
 
-        subgraph DataNet [data-net]
+        subgraph DataNet [ ]
             direction TB
             DC[Data Collector<br>REST :5001 / gRPC :50052]
             DDB[(Data DB<br>MySQL :3307)]
-            DC --> DDB
+            DC --> |via data-net| DDB
         end
     end
 
-    Client -->|HTTP| UM
-    Client -->|HTTP| DC
+    Client -->|REST API| UM
+    Client -->|REST API| DC
     UM <-->|gRPC via shared-net| DC
-    DC -->|HTTPS| OpenSky
+    DC -->|REST API| OpenSky
 
     style Client fill:#ff9f43,stroke:#e67e22,color:#fff
     style OpenSky fill:#1dd1a1,stroke:#10ac84,color:#fff
@@ -59,22 +59,22 @@ flowchart TD
 
 ## Caratteristiche Tecniche
 
-### 1. Microservizi e Comunicazione
+### 1. Microservizi
 
 - **User Manager**: Gestisce l'intero ciclo di vita degli utenti (registrazione e cancellazione) interagendo con il proprio database dedicato. L'operazione di registrazione implementa rigorosamente la politica "at-most-once". Espone API REST verso i client e un server gRPC interno utilizzato dal Data Collector per verificare l'esistenza degli utenti prima di autorizzare operazioni sugli interessi.
-- **Data Collector**: Responsabile della gestione delle sottoscrizioni (interessi) e del monitoraggio. Integra uno scheduler che interroga ciclicamente le API pubbliche di OpenSky Network (tramite client OAuth2) per recuperare voli in partenza e in arrivo, storicizzandoli nel Data DB. Fornisce endpoint REST per l'analisi dei dati, come il recupero dell'ultimo volo registrato e il calcolo della media dei voli in un intervallo temporale.
+- **Data Collector**: Responsabile della gestione delle sottoscrizioni (interessi) e del monitoraggio. Integra uno scheduler che interroga ciclicamente le API pubbliche di OpenSky Network (tramite client OAuth2) per recuperare voli in partenza e in arrivo, memorizzandoli nel Data DB. Fornisce endpoint REST per l'analisi dei dati, come il recupero dell'ultimo volo registrato e il calcolo della media dei voli in un intervallo temporale.
 
-### 2. Affidabilità e Pattern
+### 2. Feature di comunicazione
 
 - **At-Most-Once Delivery**: Implementazione di una `Request Cache`, svuotata periodicamente, su database per filtrare richieste duplicate e garantire che ogni registrazione avvenga al massimo una volta.
 - **Distributed Transactions**: Adozione di una strategia di coordinamento `"All-or-Nothing"` per la cancellazione: un utente viene rimosso solo se la contestuale rimozione dei suoi interessi sul servizio remoto (via gRPC) ha successo.
-- **Retry Policy**: I client gRPC implementano una logica di retry automatico con backoff esponenziale per gestire la resilienza contro fallimenti di rete transitori.
+- **Retry Policy**: I client gRPC implementano una logica di retry automatico con backoff esponenziale per gestire la resilienza contro errori di rete momentanei.
 
-### 3. Ottimizzazioni e Sicurezza
+### 3. Ottimizzazioni
 
-- **Bulk Upsert**: Utilizzo della clausola `ON DUPLICATE KEY UPDATE` di MySQL per l'inserimento o l'aggiornamento massivo ed efficiente di migliaia di record di volo in un'unica transazione.
+- **Bulk Upsert**: Utilizzo della clausola `ON DUPLICATE KEY UPDATE` di MySQL per l'inserimento o l'aggiornamento massivo ed efficiente di centinaia di record di voli in un'unica transazione.
 - **Parallelismo**: Impiego di `ThreadPoolExecutor` nel job di raccolta dati per interrogare le API di OpenSky in parallelo per molteplici aeroporti, riducendo i tempi di attesa, e con utilizzo di un mutex sul token in modo che sia condivido tra i thread (quando valido) ma, alla scadenza, solo uno prenda l'incarico di aggiornalo.
-- **Sicurezza**: Crittografia simmetrica `(Fernet)` applicata ai dati sensibili (IBAN) prima della persistenza su DB. Gestione thread-safe del rinnovo dei token `OAuth2`.
+- **Sicurezza**: Crittografia simmetrica `(Fernet)` applicata ai dati sensibili (IBAN) prima della persistenza su DB.
 
 ---
 
@@ -158,7 +158,7 @@ DATA_COLLECTOR_GRPC_PORT=50052
 # Application Settings
 COLLECTION_INTERVAL_HOURS=12
 ENCRYPTION_KEY=Vs1DTDJUhzrZUvriY6LDKoOPSHUb6Vx9KRJAgtTxfz0=
-cle
+
 # OpenSky Credentials (inserire le proprie credenziali)
 CLIENT_ID=
 CLIENT_SECRET=
@@ -203,7 +203,7 @@ Per testare rapidamente tutte le funzionalità del sistema, è disponibile una c
 
 ```
 DSBD_Project/
-├── data-collector/                 # Microservizio raccolta dati
+├── data-collector/                 # Microservizio raccolta e gestione dati dei voli aerei
 │   ├── app.py                      # Entry point e API REST
 │   ├── database.py                 # Configurazione SQLAlchemy
 │   ├── Dockerfile
@@ -214,6 +214,10 @@ DSBD_Project/
 │   ├── requirements.txt
 │   └── scheduler.py                # Job di raccolta periodica
 │
+├── proto/                          # Definizioni Protocol Buffers
+│   ├── user_service.proto          # Servizio UserService
+│   └── data_collector_service.proto # Servizio DataCollectorService
+│
 ├── user-manager/                   # Microservizio gestione utenti
 │   ├── app.py                      # Entry point e API REST
 │   ├── database.py                 # Configurazione SQLAlchemy
@@ -223,15 +227,11 @@ DSBD_Project/
 │   ├── models.py                   # Modelli ORM (User, RequestCache)
 │   └── requirements.txt
 │
-├── proto/                          # Definizioni Protocol Buffers
-│   ├── user_service.proto          # Servizio UserService
-│   └── data_collector_service.proto # Servizio DataCollectorService
-│
-├── .env                            # Variabili d'ambiente (esempio)
+├── .gitignore
+├── README.md
+├── RELAZIONE.pdf                   # Documentazione tecnica completa
 ├── docker-compose.yml              # Orchestrazione container
 ├── postman_collection.json         # Collection per testing API
-└── README.md
-└── RELAZIONE.pdf               # Documentazione tecnica completa
 ```
 
 ---
