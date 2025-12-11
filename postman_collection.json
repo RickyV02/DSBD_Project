@@ -1,35 +1,37 @@
 {
 	"info": {
-		"_postman_id": "b5a3c2d1-e4f6-48a9-9b0c-1d2e3f4a5b6c",
-		"name": "DSBD Project Complete Test Suite",
-		"description": "Suite completa di testing di tutto il progetto.\n\n**Struttura:**\n1. **User Manager**: CRUD completo.\n2. **Data Collector**: Gestione Interessi.\n3. **Data Operations**: Flusso dati completo (Trigger Data Fetch, Lettura, Funzionalità e Robustezza).\n4. **Data Cleanup**: Pulizia finale.",
+		"_postman_id": "dsbd-hw2-merged-final",
+		"name": "DSBD Homework 2 - Complete Test Suite",
+		"description": "Suite di test completa per l'Homework 2.\nInclude tutti i test dell'HW1 adattati per Nginx + i nuovi test per Kafka e per le soglie.\n\n**Copertura:**\n1. **Infrastructure**: Nginx Routing, SSL, Healthchecks.\n2. **User Manager**: CRUD completo, Idempotenza, Validazione Input, IP Hashing.\n3. **Data Collector**: Gestione Interessi con Soglie (HW2), Validazione ICAO.\n4. **Data Operations**: Trigger Collezione Voli, Kafka, Statistiche Voli.\n\n**IMPORTANTE**: - Disabilitare 'SSL Verification' nei Settings di Postman.\n- Per essere certi di ricevere una mail, inserirne una reale in `test_email`.\n - Dato che aggiungere un interesse triggera automaticamente la collezione dei voli (qualora nessun utente abbia già espresso un interesse per un aeroporto con lo stesso ICAO) eseguendo la collection in modalità RUN, lo scheduler di raccolta periodica (avviato dalla route di Trigger) non eseguirà la collezione voli perché c'è già un'altro thread (quello avviato per quanto detto poc'anzi) che se ne sta occupando\n-Per quanto detto al punto precedente, se viene avviata la raccolta a seguito dell'aggiunta di un interesse tramite l'utilizzo della chiamata 2.1, NON verrà generata la mail, perchè (giustamente) quell'utente non aveva inserito high e low value (il test 2.1 è l'inserimento di un interesse 'Standard'), dunque si consiglia di testarlo avviando MANUALMENTE le chiamate 2.3 (che inserisce un interesse CON high e low value) e poi, se l'interessa non c'era, aspettare la fine della raccolta avviata in automatico; viceversa, se era presenta e lo abbiamo aggiornato, avviarla manualmente grazie alla chiamata 3.1",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
 		{
-			"name": "0. System Check",
+			"name": "0. Infrastructure & Health",
 			"item": [
 				{
-					"name": "0.1 Health Check (User Manager)",
+					"name": "0.1 Gateway Health (HTTP Redirect Check)",
 					"request": {
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{user_manager_url}}/health",
+							"raw": "http://localhost/health",
+							"protocol": "http",
 							"host": [
-								"{{user_manager_url}}"
+								"localhost"
 							],
 							"path": [
 								"health"
 							]
-						}
+						},
+						"description": "Verifica che Nginx risponda sulla porta 80 e faccia redirect o gestisca la richiesta."
 					},
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status is 200\", function () { pm.response.to.have.status(200); });"
+									"pm.test(\"Gateway Responds (200/301)\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 301, 302]); });"
 								],
 								"type": "text/javascript"
 							}
@@ -37,26 +39,29 @@
 					]
 				},
 				{
-					"name": "0.2 Health Check (Data Collector)",
+					"name": "0.2 User Manager Service Health",
 					"request": {
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/health",
+							"raw": "{{base_url}}/health/users",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
 							],
 							"path": [
-								"health"
+								"health",
+								"users"
 							]
-						}
+						},
+						"description": "Verifica routing Nginx -> User Manager"
 					},
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status is 200\", function () { pm.response.to.have.status(200); });"
+									"pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Service is User Manager\", function () { var j = pm.response.json(); pm.expect(j.service).to.eql(\"user-manager\"); });"
 								],
 								"type": "text/javascript"
 							}
@@ -64,14 +69,44 @@
 					]
 				},
 				{
-					"name": "0.3 Check Scheduler Status",
+					"name": "0.3 Data Collector Service Health",
 					"request": {
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/scheduler/status",
+							"raw": "{{base_url}}/health/data",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
+							],
+							"path": [
+								"health",
+								"data"
+							]
+						},
+						"description": "Verifica routing Nginx -> Data Collector"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Service is Data Collector\", function () { var j = pm.response.json(); pm.expect(j.service).to.eql(\"data-collector\"); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "0.4 Scheduler Status",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/scheduler/status",
+							"host": [
+								"{{base_url}}"
 							],
 							"path": [
 								"scheduler",
@@ -84,8 +119,8 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status is 200\", function () { pm.response.to.have.status(200); });",
-									"pm.test(\"Scheduler is Active\", function () { var jsonData = pm.response.json(); pm.expect(jsonData.active).to.eql(true); });"
+									"pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Scheduler Active\", function () { var j = pm.response.json(); pm.expect(j.active).to.eql(true); });"
 								],
 								"type": "text/javascript"
 							}
@@ -95,10 +130,10 @@
 			]
 		},
 		{
-			"name": "1. User Manager",
+			"name": "1. User Manager Logic",
 			"item": [
 				{
-					"name": "1.1 Register User (Generates UUID)",
+					"name": "1.1 Register User (New)",
 					"event": [
 						{
 							"listen": "prerequest",
@@ -123,6 +158,11 @@
 						"method": "POST",
 						"header": [
 							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
 								"key": "X-Request-ID",
 								"value": "{{current_request_id}}",
 								"type": "text"
@@ -130,17 +170,12 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"nome\": \"Mario\",\n    \"cognome\": \"Rossi\",\n    \"codice_fiscale\": \"RSSMRA80A01H501U\",\n    \"iban\": \"IT60X0542811101000000123456\"\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
+							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"nome\": \"Test\",\n    \"cognome\": \"User\",\n    \"codice_fiscale\": \"TSTUSR80A01H501Z\",\n    \"iban\": \"IT60X0542811101000000123456\"\n}"
 						},
 						"url": {
-							"raw": "{{user_manager_url}}/users",
+							"raw": "{{base_url}}/users",
 							"host": [
-								"{{user_manager_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"users"
@@ -155,7 +190,8 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Idempotency Hit (201 or 200)\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });"
+									"pm.test(\"Idempotency Works (201/200)\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+									"pm.test(\"Same Request ID returned\", function () { var j = pm.response.json(); pm.expect(j.request_id).to.eql(pm.collectionVariables.get(\"current_request_id\")); });"
 								],
 								"type": "text/javascript"
 							}
@@ -165,6 +201,11 @@
 						"method": "POST",
 						"header": [
 							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
 								"key": "X-Request-ID",
 								"value": "{{current_request_id}}",
 								"type": "text"
@@ -172,22 +213,18 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"nome\": \"Mario\",\n    \"cognome\": \"Rossi\",\n    \"codice_fiscale\": \"RSSMRA80A01H501U\",\n    \"iban\": \"IT60X0542811101000000123456\"\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
+							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"nome\": \"Test\",\n    \"cognome\": \"User\",\n    \"codice_fiscale\": \"TSTUSR80A01H501Z\",\n    \"iban\": \"IT60X0542811101000000123456\"\n}"
 						},
 						"url": {
-							"raw": "{{user_manager_url}}/users",
+							"raw": "{{base_url}}/users",
 							"host": [
-								"{{user_manager_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"users"
 							]
-						}
+						},
+						"description": "Usa lo stesso X-Request-ID e lo stesso IP. Dovrebbe ritornare la risposta cachata."
 					}
 				},
 				{
@@ -210,21 +247,21 @@
 								"key": "X-Request-ID",
 								"value": "{{$guid}}",
 								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
 							}
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"email\": \"email-dirty\",\n    \"nome\": \"\",\n    \"cognome\": null,\n    \"codice_fiscale\": \"123\",\n    \"iban\": \"\"\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
+							"raw": "{\n    \"email\": \"email-dirty\",\n    \"nome\": \"\",\n    \"cognome\": null,\n    \"codice_fiscale\": \"123\",\n    \"iban\": \"\"\n}"
 						},
 						"url": {
-							"raw": "{{user_manager_url}}/users",
+							"raw": "{{base_url}}/users",
 							"host": [
-								"{{user_manager_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"users"
@@ -238,9 +275,9 @@
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{user_manager_url}}/users/verify/{{test_email}}",
+							"raw": "{{base_url}}/users/verify/{{test_email}}",
 							"host": [
-								"{{user_manager_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"users",
@@ -254,8 +291,7 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status is 200\", function () { pm.response.to.have.status(200); });",
-									"pm.test(\"User Exists\", function () { var jsonData = pm.response.json(); pm.expect(jsonData.exists).to.eql(true); });"
+									"pm.test(\"User Exists\", function () { var j = pm.response.json(); pm.expect(j.exists).to.eql(true); });"
 								],
 								"type": "text/javascript"
 							}
@@ -263,14 +299,14 @@
 					]
 				},
 				{
-					"name": "1.5 Get User (Success)",
+					"name": "1.5 Get User Detail",
 					"request": {
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{user_manager_url}}/users/{{test_email}}",
+							"raw": "{{base_url}}/users/{{test_email}}",
 							"host": [
-								"{{user_manager_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"users",
@@ -283,8 +319,8 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status is 200\", function () { pm.response.to.have.status(200); });",
-									"pm.test(\"Correct Email\", function () { var jsonData = pm.response.json(); pm.expect(jsonData.user.email).to.eql(pm.collectionVariables.get(\"test_email\")); });"
+									"pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Correct Email\", function () { var j = pm.response.json(); pm.expect(j.user.email).to.eql(pm.collectionVariables.get(\"test_email\")); });"
 								],
 								"type": "text/javascript"
 							}
@@ -297,9 +333,9 @@
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{user_manager_url}}/users/utente-inesistente@test.com",
+							"raw": "{{base_url}}/users/utente-inesistente@test.com",
 							"host": [
-								"{{user_manager_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"users",
@@ -325,9 +361,9 @@
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{user_manager_url}}/users",
+							"raw": "{{base_url}}/users",
 							"host": [
-								"{{user_manager_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"users"
@@ -339,8 +375,8 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Status is 200\", function () { pm.response.to.have.status(200); });",
-									"pm.test(\"Count > 0\", function () { var jsonData = pm.response.json(); pm.expect(jsonData.count).to.be.above(0); });"
+									"pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Count > 0\", function () { var j = pm.response.json(); pm.expect(j.count).to.be.above(0); });"
 								],
 								"type": "text/javascript"
 							}
@@ -350,26 +386,27 @@
 			]
 		},
 		{
-			"name": "2. Data Collector",
+			"name": "2. Data Collector (Interests & Thresholds)",
 			"item": [
 				{
-					"name": "2.1 Add Interest (LIRF - Success)",
+					"name": "2.1 Add Interest (Standard)",
 					"request": {
 						"method": "POST",
-						"header": [],
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"airport_icao\": \"{{test_airport}}\"\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
+							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"airport_icao\": \"{{test_airport}}\"\n}"
 						},
 						"url": {
-							"raw": "{{data_collector_url}}/interests",
+							"raw": "{{base_url}}/interests",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"interests"
@@ -381,7 +418,7 @@
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Interest Added (201)\", function () { pm.response.to.have.status(201); });"
+									"pm.test(\"Interest Created (201)\", function () { pm.response.to.have.status(201); });"
 								],
 								"type": "text/javascript"
 							}
@@ -392,20 +429,21 @@
 					"name": "2.2 Add Interest (Duplicate Check)",
 					"request": {
 						"method": "POST",
-						"header": [],
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"airport_icao\": \"{{test_airport}}\"\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
+							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"airport_icao\": \"{{test_airport}}\"\n}"
 						},
 						"url": {
-							"raw": "{{data_collector_url}}/interests",
+							"raw": "{{base_url}}/interests",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"interests"
@@ -427,23 +465,102 @@
 					]
 				},
 				{
-					"name": "2.3 Add Interest (Dirty ICAO - 400)",
+					"name": "2.3 Update Interest (Add Thresholds)",
 					"request": {
 						"method": "POST",
-						"header": [],
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"airport_icao\": \"ABCDEFG\"\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
+							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"airport_icao\": \"{{test_airport}}\",\n    \"high_value\": 1,\n    \"low_value\": 0\n}"
 						},
 						"url": {
-							"raw": "{{data_collector_url}}/interests",
+							"raw": "{{base_url}}/interests",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
+							],
+							"path": [
+								"interests"
+							]
+						},
+						"description": "Aggiorna l'interesse esistente aggiungendo i parametri HW2: High Value e Low Value. I parametri sono volutamente bassi per triggerare facilmente l'invio della mail"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Updated (200)\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Values Set\", function () { \n    var j = pm.response.json(); \n    pm.expect(j.interest.high_value).to.eql(1);\n    pm.expect(j.interest.low_value).to.eql(0);\n});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "2.4 Update Interest (Validation Error)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"airport_icao\": \"{{test_airport}}\",\n    \"high_value\": 5,\n    \"low_value\": 50\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/interests",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"interests"
+							]
+						},
+						"description": "Tenta di settare High < Low. Deve fallire."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Validation Failed (400)\", function () { pm.response.to.have.status(400); });",
+									"pm.test(\"Error Message Correct\", function () { \n    pm.expect(pm.response.json().error).to.include(\"maggiore di low_value\"); \n});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "2.5 Add Interest (Dirty ICAO - 400)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"{{test_email}}\",\n    \"airport_icao\": \"ABCDEFG\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/interests",
+							"host": [
+								"{{base_url}}"
 							],
 							"path": [
 								"interests"
@@ -463,23 +580,24 @@
 					]
 				},
 				{
-					"name": "2.4 Add Interest (Unknown User - gRPC Check)",
+					"name": "2.6 Add Interest (Unknown User)",
 					"request": {
 						"method": "POST",
-						"header": [],
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"email\": \"fantasma@nonesiste.it\",\n    \"airport_icao\": \"LIRF\"\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
+							"raw": "{\n    \"email\": \"fantasma@nonesiste.it\",\n    \"airport_icao\": \"LIRF\"\n}"
 						},
 						"url": {
-							"raw": "{{data_collector_url}}/interests",
+							"raw": "{{base_url}}/interests",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"interests"
@@ -499,14 +617,14 @@
 					]
 				},
 				{
-					"name": "2.5 Get User Interests (Verify Added)",
+					"name": "2.7 Get User Interests",
 					"request": {
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/interests/{{test_email}}",
+							"raw": "{{base_url}}/interests/{{test_email}}",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"interests",
@@ -530,32 +648,33 @@
 			]
 		},
 		{
-			"name": "3. Data Operations",
+			"name": "3. Data & Kafka Flow",
 			"item": [
 				{
-					"name": "3.1 Trigger Manual Collection",
+					"name": "3.1 Trigger Collection (Activates Kafka)",
 					"request": {
 						"method": "POST",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/collect/manual",
+							"raw": "{{base_url}}/collect/manual",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"collect",
 								"manual"
 							]
-						}
+						},
+						"description": "Lancia la raccolta dati. Con le soglie impostate a valori bassi, questo DEVE generare messaggi Kafka + mandare la mail.\n\n**Verifica:** Controlla i log su terminale di `alert-system` e `alert-notifier`."
 					},
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Collection Started (200)\", function () { pm.response.to.have.status(200); });",
-									"// Wait 5 seconds for OpenSky data processing",
-									"setTimeout(function(){}, 5000);"
+									"pm.test(\"Job Started (200)\", function () { pm.response.to.have.status(200); });",
+									"// Wait for OpenSky processing (Client side wait)",
+									"setTimeout(function(){}, 3000);"
 								],
 								"type": "text/javascript"
 							}
@@ -568,9 +687,9 @@
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/flights/{{test_airport}}?email={{test_email}}",
+							"raw": "{{base_url}}/flights/{{test_airport}}?email={{test_email}}",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"flights",
@@ -599,14 +718,51 @@
 					]
 				},
 				{
-					"name": "3.3 Get Latest Flight",
+					"name": "3.3 Get Flights Statistics",
 					"request": {
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/flights/{{test_airport}}/latest?email={{test_email}}&type=departure",
+							"raw": "{{base_url}}/flights/{{test_airport}}/stats/airlines?email={{test_email}}",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
+							],
+							"path": [
+								"flights",
+								"{{test_airport}}",
+								"stats",
+								"airlines"
+							],
+							"query": [
+								{
+									"key": "email",
+									"value": "{{test_email}}"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Returns Data\", function () { var j = pm.response.json(); pm.expect(j.data).to.be.an('array'); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "3.4 Get Latest Flight",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/flights/{{test_airport}}/latest?email={{test_email}}&type=departure",
+							"host": [
+								"{{base_url}}"
 							],
 							"path": [
 								"flights",
@@ -638,14 +794,14 @@
 					]
 				},
 				{
-					"name": "3.4 Get Latest Flight (Invalid Type - 400)",
+					"name": "3.5 Get Latest Flight (Invalid Type - 400)",
 					"request": {
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/flights/{{test_airport}}/latest?email={{test_email}}&type=invalid",
+							"raw": "{{base_url}}/flights/{{test_airport}}/latest?email={{test_email}}&type=invalid",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"flights",
@@ -677,14 +833,14 @@
 					]
 				},
 				{
-					"name": "3.5 Get Average Stats",
+					"name": "3.6 Get Average Stats",
 					"request": {
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/flights/{{test_airport}}/average?email={{test_email}}&days=5",
+							"raw": "{{base_url}}/flights/{{test_airport}}/average?email={{test_email}}&days=5",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"flights",
@@ -717,51 +873,14 @@
 					]
 				},
 				{
-					"name": "3.6 Get Airline Stats (Top 5)",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "{{data_collector_url}}/flights/{{test_airport}}/stats/airlines?email={{test_email}}",
-							"host": [
-								"{{data_collector_url}}"
-							],
-							"path": [
-								"flights",
-								"{{test_airport}}",
-								"stats",
-								"airlines"
-							],
-							"query": [
-								{
-									"key": "email",
-									"value": "{{test_email}}"
-								}
-							]
-						}
-					},
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Stats Retrieved (200)\", function () { pm.response.to.have.status(200); });",
-									"pm.test(\"Structure Valid\", function () { var j = pm.response.json(); pm.expect(j.stat_type).to.eql(\"top_5_airlines\"); });"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
 					"name": "3.7 Security Check (Airport Not Followed)",
 					"request": {
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/flights/LIMC?email={{test_email}}",
+							"raw": "{{base_url}}/flights/LIMC?email={{test_email}}",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"flights",
@@ -773,14 +892,15 @@
 									"value": "{{test_email}}"
 								}
 							]
-						}
+						},
+						"description": "Tenta di accedere a LIMC (non seguito dall'utente). Deve fallire."
 					},
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Forbidden Access (403)\", function () { pm.response.to.have.status(403); });"
+									"pm.test(\"Forbidden (403)\", function () { pm.response.to.have.status(403); });"
 								],
 								"type": "text/javascript"
 							}
@@ -793,9 +913,9 @@
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/flights/{{test_airport}}?email={{test_email}}&start_date=2025-01-01&end_date=2024-01-01",
+							"raw": "{{base_url}}/flights/{{test_airport}}?email={{test_email}}&start_date=2025-01-01&end_date=2024-01-01",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"flights",
@@ -832,17 +952,17 @@
 			]
 		},
 		{
-			"name": "4. Data Cleanup",
+			"name": "4. Cleanup",
 			"item": [
 				{
-					"name": "4.1 Manual Interest Removal",
+					"name": "4.1 Delete Manual Interest",
 					"request": {
 						"method": "DELETE",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/interests?email={{test_email}}&airport_icao={{test_airport}}",
+							"raw": "{{base_url}}/interests?email={{test_email}}&airport_icao={{test_airport}}",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"interests"
@@ -872,14 +992,14 @@
 					]
 				},
 				{
-					"name": "4.2 Delete User (Triggers Interests Cleanup)",
+					"name": "4.2 Delete User",
 					"request": {
 						"method": "DELETE",
 						"header": [],
 						"url": {
-							"raw": "{{user_manager_url}}/users/{{test_email}}",
+							"raw": "{{base_url}}/users/{{test_email}}",
 							"host": [
-								"{{user_manager_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"users",
@@ -905,9 +1025,9 @@
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{data_collector_url}}/interests/{{test_email}}",
+							"raw": "{{base_url}}/interests/{{test_email}}",
 							"host": [
-								"{{data_collector_url}}"
+								"{{base_url}}"
 							],
 							"path": [
 								"interests",
@@ -932,18 +1052,13 @@
 	],
 	"variable": [
 		{
-			"key": "user_manager_url",
-			"value": "http://localhost:5000",
-			"type": "string"
-		},
-		{
-			"key": "data_collector_url",
-			"value": "http://localhost:5001",
+			"key": "base_url",
+			"value": "https://localhost",
 			"type": "string"
 		},
 		{
 			"key": "test_email",
-			"value": "mario.rossi@example.com",
+			"value": "dsbd.test@example.com",
 			"type": "string"
 		},
 		{

@@ -3,6 +3,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta
+from circuit_breaker import CircuitBreaker, CircuitBreakerOpenException
 
 class OpenSkyClient:
     def __init__(self):
@@ -18,6 +19,8 @@ class OpenSkyClient:
         # Thread safety lock for authentication to prevent race conditions
         self._auth_lock = threading.Lock()
 
+        self.cb = CircuitBreaker(failure_threshold=3, recovery_timeout=60)
+
     def _perform_login(self):
         print(f"[Thread {threading.current_thread().name}] Richiesta nuovo Token di accesso a OpenSky...", flush=True)
         payload = {
@@ -26,7 +29,8 @@ class OpenSkyClient:
             'client_secret': self.client_secret
         }
         try:
-            response = requests.post(self.auth_url, data=payload, timeout=10)
+            response = self.cb.call(requests.post, self.auth_url, data=payload, timeout=10)
+
             if response.status_code == 200:
                 data = response.json()
                 self.token = data.get('access_token')
@@ -36,6 +40,9 @@ class OpenSkyClient:
             else:
                 print(f"Errore Autenticazione: {response.status_code} - {response.text}", flush=True)
                 self.token = None
+        except CircuitBreakerOpenException:
+            print("CircuitBreaker OPEN: Impossibile effettuare login.", flush=True)
+            self.token = None
         except Exception as e:
             print(f"Errore connessione Auth: {e}", flush=True)
 
@@ -58,7 +65,7 @@ class OpenSkyClient:
 
     def get_departures(self, airport_icao, begin_timestamp=None, end_timestamp=None):
         if not begin_timestamp:
-            begin_timestamp = int((datetime.now() - timedelta(hours=24)).timestamp())
+            begin_timestamp = int((datetime.now() - timedelta(hours=6)).timestamp())
         if not end_timestamp:
             end_timestamp = int(datetime.now().timestamp())
 
@@ -68,11 +75,15 @@ class OpenSkyClient:
         try:
             print(f"Recupero partenze da {airport_icao}...", flush=True)
             # We call get_headers() which handles token refresh automatically
-            response = requests.get(url, params=params, headers=self.get_headers(), timeout=30)
+            response = self.cb.call(requests.get, url, params=params, headers=self.get_headers(), timeout=30)
 
             if response.status_code == 200:
-                flights = response.json()
-                return flights
+                try:
+                    flights = response.json()
+                    return flights if flights else []
+                except ValueError:
+                    print(f"Warning: JSON vuoto/invalido per {airport_icao}", flush=True)
+                    return []
 
             elif response.status_code == 401:
                 # 401 Explicitly means Token Expired or Invalid.
@@ -82,6 +93,7 @@ class OpenSkyClient:
                 self.token = None
 
                 # Recursive retry (the next call will trigger get_headers -> login)
+                # Note: Recursive call is also protected by CB because it calls get_departures again
                 return self.get_departures(airport_icao, begin_timestamp, end_timestamp)
 
             elif response.status_code == 404:
@@ -90,20 +102,23 @@ class OpenSkyClient:
 
             elif response.status_code == 429:
                 # Rate Limiting handling
-                print(f"RATE LIMIT EXCEEDED per {airport_icao}. Attendo 60 secondi...", flush=True)
-                time.sleep(60)
+                print(f"RATE LIMIT EXCEEDED per {airport_icao}. Attendi un minuto...", flush=True)
                 return []
 
             else:
                 print(f"Errore API: {response.status_code}", flush=True)
+                print(f"Risposta Server: {response.text}", flush=True)
                 return []
+        except CircuitBreakerOpenException:
+            print(f"CircuitBreaker OPEN: Saltata richiesta per {airport_icao}", flush=True)
+            return []
         except Exception as e:
             print(f"Errore richiesta: {str(e)}", flush=True)
             return []
 
     def get_arrivals(self, airport_icao, begin_timestamp=None, end_timestamp=None):
         if not begin_timestamp:
-            begin_timestamp = int((datetime.now() - timedelta(hours=24)).timestamp())
+            begin_timestamp = int((datetime.now() - timedelta(hours=6)).timestamp())
         if not end_timestamp:
             end_timestamp = int(datetime.now().timestamp())
 
@@ -112,11 +127,15 @@ class OpenSkyClient:
 
         try:
             print(f"Recupero arrivi a {airport_icao}...", flush=True)
-            response = requests.get(url, params=params, headers=self.get_headers(), timeout=30)
+            response = self.cb.call(requests.get, url, params=params, headers=self.get_headers(), timeout=30)
 
             if response.status_code == 200:
-                flights = response.json()
-                return flights
+                try:
+                    flights = response.json()
+                    return flights if flights else []
+                except ValueError:
+                    print(f"Warning: JSON vuoto/invalido per {airport_icao}", flush=True)
+                    return []
 
             elif response.status_code == 401:
                 print(f"401 Unauthorized per {airport_icao}. Token scaduto. Forzo aggiornamento...", flush=True)
@@ -127,13 +146,16 @@ class OpenSkyClient:
                 return []
 
             elif response.status_code == 429:
-                print(f"RATE LIMIT EXCEEDED per {airport_icao}. Attendo 60 secondi...", flush=True)
-                time.sleep(60)
+                print(f"RATE LIMIT EXCEEDED per {airport_icao}. Attendi un minuto...", flush=True)
                 return []
 
             else:
                 print(f"Errore API: {response.status_code}", flush=True)
+                print(f"Risposta Server: {response.text}", flush=True)
                 return []
+        except CircuitBreakerOpenException:
+            print(f"CircuitBreaker OPEN: Saltata richiesta per {airport_icao}", flush=True)
+            return []
         except Exception as e:
             print(f"Errore richiesta: {str(e)}", flush=True)
             return []

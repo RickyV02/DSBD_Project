@@ -18,6 +18,13 @@ CORS(app)
 # Configs for Database
 app.config['SQLALCHEMY_DATABASE_URI'] = f"mysql+pymysql://{os.getenv('DATA_DB_USER')}:{os.getenv('DATA_DB_PASSWORD')}@{os.getenv('DATA_DB_HOST')}:{os.getenv('DATA_DB_PORT')}/{os.getenv('DATA_DB_NAME')}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_size': 20, #This is the number of connections to keep open inside the connection pool, can be adjusted based on expected load
+    'max_overflow': 10, #This is the number of connections that can be created after the pool reached its size limit, can be adjusted based on expected load spikes
+    'pool_recycle': 1800, #Recycle connections after 30 minutes to prevent timeout issues
+    'pool_pre_ping': True, #Enable connection health checks
+    'pool_timeout': 30  #Timeout for getting a connection from the pool
+}
 
 db.init_app(app)
 
@@ -82,24 +89,103 @@ def add_interest():
                 "message": message
             }), 404
 
+        # UX IMPROVEMENT: Check if this airport is currently monitored by anyone
+        is_new_airport = db.session.execute(
+            db.select(func.count()).select_from(UserInterest).filter_by(airport_icao=airport_icao)
+        ).scalar() == 0
+
+        # Check if interest already exists for this user
         existing = db.session.execute(db.select(UserInterest).filter_by(user_email=email, airport_icao=airport_icao)).scalar_one_or_none()
         if existing:
+            updated = False
+
+            if 'high_value' in data: # Check if key was sent
+                val = data['high_value']
+                if val is None:
+                    existing.high_value = None # Client sent null -> Remove threshold
+                    updated = True
+                else:
+                    # Client sent a value -> Cast and Validate
+                    try:
+                        val = int(val)
+                        if val < 0: return jsonify({"error": "high_value non può essere negativo"}), 400
+                        existing.high_value = val
+                        updated = True
+                    except ValueError:
+                        return jsonify({"error": "high_value deve essere un intero"}), 400
+
+            if 'low_value' in data: # Check if key was sent
+                val = data['low_value']
+                if val is None:
+                    existing.low_value = None # Client sent null -> Remove threshold
+                    updated = True
+                else:
+                    try:
+                        val = int(val)
+                        if val < 0: return jsonify({"error": "low_value non può essere negativo"}), 400
+                        existing.low_value = val
+                        updated = True
+                    except ValueError:
+                        return jsonify({"error": "low_value deve essere un intero"}), 400
+
+            h = existing.high_value
+            l = existing.low_value
+            if h is not None and l is not None and h <= l:
+                 db.session.rollback() # Important: undo changes in memory
+                 return jsonify({"error": "high_value deve essere maggiore di low_value"}), 400
+
+            if updated:
+                db.session.commit()
+                return jsonify({
+                    "message": "Interesse aggiornato con successo",
+                    "interest": existing.to_dict()
+                }), 200
+            else:
+                return jsonify({
+                    "message": "Interesse già presente e nessun nuovo valore fornito",
+                    "interest": existing.to_dict(),
+                    "already_exists": True
+                }), 200
+
+        else:
+            # Here we use .get() because if missing, None is the correct default for creation
+            high_value = data.get('high_value')
+            low_value = data.get('low_value')
+
+            # Validation for new entry
+            if high_value is not None:
+                try:
+                    high_value = int(high_value)
+                    if high_value < 0: return jsonify({"error": "high_value non può essere negativo"}), 400
+                except ValueError: return jsonify({"error": "high_value deve essere un intero"}), 400
+
+            if low_value is not None:
+                try:
+                    low_value = int(low_value)
+                    if low_value < 0: return jsonify({"error": "low_value non può essere negativo"}), 400
+                except ValueError: return jsonify({"error": "low_value deve essere un intero"}), 400
+
+            if high_value is not None and low_value is not None:
+                if high_value <= low_value:
+                    return jsonify({"error": "high_value deve essere maggiore di low_value"}), 400
+
+            interest = UserInterest(user_email=email, airport_icao=airport_icao, high_value=high_value, low_value=low_value)
+            db.session.add(interest)
+            db.session.commit()
+            interest_dict = interest.to_dict()
+
+            # Trigger immediate collection if it's a new airport
+            if is_new_airport:
+                print(f"Nuovo aeroporto {airport_icao} inserito! Avvio raccolta dati immediata...", flush=True)
+                # Run in a separate thread to avoid blocking the HTTP response
+                threading.Thread(target=scheduler.collect_single_airport, args=(airport_icao,)).start()
+
             return jsonify({
-                "message": "Interesse già presente per questo aeroporto!",
-                "interest": existing.to_dict(),
-                "already_exists": True
-            }), 200
-
-        interest = UserInterest(user_email=email, airport_icao=airport_icao)
-        db.session.add(interest)
-        db.session.commit()
-        interest_dict = interest.to_dict()
-
-        return jsonify({
-            "message": "Interesse aggiunto con successo",
-            "interest": interest_dict,
-            "already_exists": False
-        }), 201
+                "message": "Interesse aggiunto con successo",
+                "interest": interest_dict,
+                "already_exists": False,
+                "data_collection_triggered": is_new_airport
+            }), 201
 
     except Exception as e:
         db.session.rollback()
@@ -426,7 +512,10 @@ def get_airline_stats(airport_icao):
 
         exists, message = user_manager_client.verify_user(clean_email)
         if not exists:
-            return jsonify({"error": "Utente non trovato", "message": message}), 404
+            return jsonify({
+                "error": "Utente non trovato",
+                "message": message
+            }), 404
 
         interest = db.session.execute(db.select(UserInterest).filter_by(user_email=clean_email, airport_icao=clean_icao)).scalar_one_or_none()
         if not interest:

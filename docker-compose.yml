@@ -19,6 +19,7 @@ services:
             interval: 10s
             timeout: 5s
             retries: 5
+        restart: unless-stopped
 
     # Database for Data Collector
     data-db:
@@ -40,6 +41,7 @@ services:
             interval: 10s
             timeout: 5s
             retries: 5
+        restart: unless-stopped
 
     # User Manager Microservice
     user-manager:
@@ -56,9 +58,11 @@ services:
             ENCRYPTION_KEY: ${ENCRYPTION_KEY}
             DATA_COLLECTOR_HOST: ${DATA_COLLECTOR_HOST}
             DATA_COLLECTOR_GRPC_PORT: ${DATA_COLLECTOR_GRPC_PORT}
-        ports:
-            - "${USER_MANAGER_PORT}:5000"
-            - "${USER_MANAGER_GRPC_PORT}:50051"
+        # Switched from 'ports' to 'expose': now only internally accessible (inside Docker network).
+        # The service is accessible from the outside only via Nginx.
+        expose:
+            - "5000"
+            - "50051"
         volumes:
             - ./proto:/app/proto
         depends_on:
@@ -87,9 +91,12 @@ services:
             CLIENT_ID: ${CLIENT_ID}
             CLIENT_SECRET: ${CLIENT_SECRET}
             DATA_COLLECTOR_GRPC_PORT: ${DATA_COLLECTOR_GRPC_PORT}
-        ports:
-            - "${DATA_COLLECTOR_PORT}:5001"
-            - "${DATA_COLLECTOR_GRPC_PORT}:50052"
+            KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+        # Switched from 'ports' to 'expose': now only internally accessible (inside Docker network).
+        # The service is accessible from the outside only via Nginx.
+        expose:
+            - "5001"
+            - "50052"
         volumes:
             - ./proto:/app/proto
         depends_on:
@@ -97,8 +104,102 @@ services:
                 condition: service_healthy
             user-manager:
                 condition: service_started
+            kafka:
+                condition: service_healthy
         networks:
             - data-net
+            - kafka-net
+            - shared-net
+        restart: unless-stopped
+
+    # Kafka
+    kafka:
+        image: confluentinc/cp-kafka:7.4.0
+        container_name: kafka
+        environment:
+            KAFKA_LOG4J_ROOT_LOGGER: "WARN, stdout"
+            KAFKA_LOG4J_LOGGERS: "kafka=WARN,kafka.controller=WARN,kafka.log.LogCleaner=WARN,state.change.logger=WARN,kafka.server.ClientQuotas=WARN,org.apache.kafka.image.loader.MetadataLoader=WARN"
+            KAFKA_NODE_ID: 1
+            CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+            KAFKA_CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+            KAFKA_PROCESS_ROLES: broker,controller
+            KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+            KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093
+            # Internal Docker clients connect to 'kafka:9092'
+            KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+            KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+            KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+            KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+            # Single-Node Replication Settings (Essential for 1 broker cluster)
+            KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+            KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+            KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+            KAFKA_NUM_PARTITIONS: 1 # Default number of partitions per topic
+            KAFKA_LOG_DIRS: /var/lib/kafka/data
+        expose:
+          - "9092"
+        volumes:
+            - kafka-data:/var/lib/kafka/data
+        networks:
+            - kafka-net
+        healthcheck:
+            test: nc -z localhost 9092 || exit 1
+            interval: 10s
+            timeout: 5s
+            retries: 5
+        restart: unless-stopped
+
+    # Alert System (Both Kafka Consumer and Producer)
+    alert-system:
+        build:
+            context: .
+            dockerfile: alert-system/Dockerfile
+        container_name: alert-system
+        environment:
+            KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+        depends_on:
+            kafka:
+                condition: service_healthy
+        networks:
+            - kafka-net
+        restart: unless-stopped
+
+    # Alert Notifier System (Kafka Consumer)
+    alert-notifier-system:
+        build:
+            context: .
+            dockerfile: alert-notifier-system/Dockerfile
+        container_name: alert-notifier-system
+        environment:
+            KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+            SMTP_SERVER: ${SMTP_SERVER}
+            SMTP_PORT: ${SMTP_PORT}
+            SMTP_USER: ${SMTP_USER}
+            SMTP_PASSWORD: ${SMTP_PASSWORD}
+            SENDER_EMAIL: ${SENDER_EMAIL}
+        depends_on:
+            kafka:
+                condition: service_healthy
+        networks:
+            - kafka-net
+        restart: unless-stopped
+
+    # API Gateway (NGINX)
+    nginx:
+        image: nginx:latest
+        container_name: nginx
+        ports:
+            - "80:80" # HTTP (will redirect to HTTPS)
+            - "443:443" # HTTPS
+        volumes:
+            - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+            - ./nginx/ssl:/etc/nginx/ssl:ro # That's where SSL certificates are stored
+        depends_on:
+            user-manager:
+                condition: service_started
+            data-collector:
+                condition: service_started
+        networks:
             - shared-net
         restart: unless-stopped
 
@@ -109,7 +210,10 @@ networks:
         driver: bridge
     shared-net:
         driver: bridge
+    kafka-net:
+        driver: bridge
 
 volumes:
     user-db-data:
     data-db-data:
+    kafka-data:

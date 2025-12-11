@@ -89,10 +89,16 @@ def is_valid_uuid(val):
     except ValueError:
         return False
 
-# Helper to identify the client (simplified version using IP address)
-# Note: In Docker, this might reflect the Gateway IP, but it's just a demonstration of Client recognition.
+# Helper to identify the client via hashed IP address
 def get_client_id():
-    ip = request.remote_addr or "unknown"
+    ip = request.headers.get('X-Real-IP') # Try to get the real client IP from Nginx header
+
+    if not ip:
+        ip = request.remote_addr or "unknown" # Fallback to remote_addr if header not present (that's the case without Nginx, like in Postman tests directly to Flask in the previous version).
+
+    # Basically, if there is not Nginx and we contact Flask via postman, remote_addr is the IP of the client.
+    # If there is Nginx, it passes the real client IP in X-Real-IP header (otherwise remote_addr is Nginx's gateway IP, which is useless for us).
+
     return hashlib.sha256(ip.encode()).hexdigest()
 
 @app.route('/health', methods=['GET'])

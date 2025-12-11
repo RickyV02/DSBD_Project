@@ -8,6 +8,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 from sqlalchemy import select, delete, not_
 from sqlalchemy.dialects.mysql import insert # Importing the specific MySQL dialect 'insert' to enable the ON DUPLICATE KEY UPDATE' feature (Upsert).
+from kafka import KafkaProducer
+import json
+import os
+import time
+import random
 
 class DataCollectorScheduler:
     def __init__(self, app: Flask, db, opensky_client: OpenSkyClient):
@@ -16,18 +21,116 @@ class DataCollectorScheduler:
         self.opensky_client = opensky_client
         self.scheduler = BackgroundScheduler()
 
+        self.kafka_producer = None
+        self.topic = 'to-alert-system'
+
+        self.kafka_lock = threading.Lock()
+
+        # CONCURRENCY CONTROL:
+        # Set to track airports currently being updated to avoid race conditions
+        # between manual triggers and the periodic job.
+        self.processing_airports = set()
+        self.processing_lock = threading.Lock()
+
+        self._connect_kafka()
+
+    def _connect_kafka(self):
+        try:
+            kafka_bootstrap_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
+            self.kafka_producer = KafkaProducer(
+                bootstrap_servers=kafka_bootstrap_servers,
+                value_serializer=lambda v: json.dumps(v).encode('utf-8'), # We use json serialization for messages
+                acks='all', #Ensure the highest level of message durability by waiting for all replicas to acknowledge
+                retries=5,
+                linger_ms=50, #Reduce latency by batching messages for up to 50ms
+                batch_size=32768,     # Increase batch size to 32KB for better throughput
+                retry_backoff_ms=1000 # Wait 1 second before retrying, just to be safe
+            )
+            print(f"Kafka Producer connesso a {kafka_bootstrap_servers}", flush=True)
+        except Exception as e:
+            print(f"Errore connessione Kafka: {e}", flush=True)
+            self.kafka_producer = None
+
+    def _acquire_lock(self, icao):
+        with self.processing_lock:
+            if icao in self.processing_airports:
+                return False
+            self.processing_airports.add(icao)
+            return True
+
+    def _release_lock(self, icao):
+        with self.processing_lock:
+            self.processing_airports.discard(icao)
+
+    def collect_single_airport(self, target_icao):
+        thread_name = threading.current_thread().name
+
+        if not self._acquire_lock(target_icao):
+            print(f"[{thread_name}] SKIP {target_icao}: Già in fase di aggiornamento.", flush=True)
+            return
+
+        try:
+            if not self.kafka_producer:
+                with self.kafka_lock:
+                    if not self.kafka_producer:
+                        self._connect_kafka()
+
+            with self.app.app_context():
+                try:
+                    print(f"\n[{thread_name}] [Trigger] Avvio raccolta mirata per {target_icao}...", flush=True)
+
+                    query = select(UserInterest).filter_by(airport_icao=target_icao)
+                    interests_objs = db.session.execute(query).scalars().all()
+
+                    if not interests_objs:
+                        print(f"[{thread_name}] Nessun interesse trovato per {target_icao}, abort.", flush=True)
+                        return
+
+                    try:
+                        flight_data = self.opensky_client.get_flights_for_airport(target_icao)
+                    except Exception as e:
+                        print(f"[{thread_name}] Errore download {target_icao}: {e}", flush=True)
+                        return
+
+                    if not flight_data:
+                        return
+
+                    interests = [i.to_dict() for i in interests_objs]
+
+                    self._process_airport_data(target_icao, flight_data, interests)
+
+                finally:
+                    db.session.remove()
+
+        except Exception as e:
+            print(f"[{thread_name}] Errore durante la raccolta mirata: {e}", flush=True)
+        finally:
+            self._release_lock(target_icao)
+
     def collect_data_job(self):
+        if not self.kafka_producer:
+            print("Kafka Producer non connesso, tentando riconnessione...", flush=True)
+            with self.kafka_lock:
+                if not self.kafka_producer:
+                    self._connect_kafka()
+
         with self.app.app_context():
             try:
                 print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Avvio raccolta dati periodica...", flush=True)
 
-                # Fetch ACTIVE airports (current users' interests)
-                query = select(UserInterest.airport_icao).distinct()
-                airports_query = db.session.execute(query).scalars().all()
-                active_airports = list(airports_query)
+                # Fetch ALL active interests
+                query = select(UserInterest)
+                interests = db.session.execute(query).scalars().all()
 
-                # Deletes flight data for airports that are no longer in the active list.
-                # This ensures that if an airport is abandoned by all users, its data is eventually removed.
+                airport_interests = {}
+                for interest in interests:
+                    if interest.airport_icao not in airport_interests:
+                        airport_interests[interest.airport_icao] = []
+                    airport_interests[interest.airport_icao].append(interest.to_dict())
+
+                active_airports = list(airport_interests.keys())
+
+                # Garbage Collection
                 try:
                     if not active_airports:
                         print("Nessun interesse attivo. Pulizia completa voli...", flush=True)
@@ -53,52 +156,122 @@ class DataCollectorScheduler:
                     print(f"Errore durante la pulizia voli: {e}", flush=True)
 
                 print(f"Aeroporti da monitorare: {', '.join(active_airports)}", flush=True)
-                total_saved = 0
 
-                def fetch_airport_data(icao):
-                    thread_name = threading.current_thread().name
-                    print(f"Thread {thread_name} avviato per: {icao}", flush=True)
-                    try:
-                        print(f"Richiesta OpenSky per {icao} in corso...", flush=True)
-                        data = self.opensky_client.get_flights_for_airport(icao)
-                        return icao, data
-                    except Exception as e:
-                        print(f"Errore download {icao}: {e}", flush=True)
-                        return icao, None
-
-                with ThreadPoolExecutor(max_workers=5) as executor:
-                    future_to_icao = {executor.submit(fetch_airport_data, icao): icao for icao in active_airports}
-
-                    for future in as_completed(future_to_icao):
-                        airport_icao, flight_data = future.result()
-
-                        if not flight_data:
-                            continue
+                # Using a wrapper to handle locking per airport task
+                def process_wrapper(icao):
+                    with self.app.app_context():
+                        thread_name = threading.current_thread().name
+                        if not self._acquire_lock(icao):
+                            print(f"[{thread_name}] SKIP {icao}: Già in aggiornamento da altro thread.", flush=True)
+                            return
 
                         try:
-                            c_dep = 0
-                            c_arr = 0
-
-                            if flight_data.get('departures'):
-                                c_dep = self._save_flights(airport_icao, flight_data['departures'], 'departure')
-
-                            if flight_data.get('arrivals'):
-                                c_arr = self._save_flights(airport_icao, flight_data['arrivals'], 'arrival')
-
-                            print(f"-> Completato {airport_icao}: Processati {c_dep} partenze, {c_arr} arrivi.", flush=True)
-                            total_saved += (c_dep + c_arr)
-
+                            print(f"[{thread_name}] Richiedo dati per {icao} a OpenSky...", flush=True)
+                            data = self.opensky_client.get_flights_for_airport(icao)
+                            if data:
+                                print(f"[{thread_name}] Dati scaricati per {icao}, elaborazione...", flush=True)
+                                self._process_airport_data(icao, data, airport_interests[icao])
+                                print(f"[{thread_name}] Elaborazione completata per {icao}.", flush=True)
                         except Exception as e:
-                            db.session.rollback()
-                            print(f"Errore critico salvataggio DB per {airport_icao}: {e}", flush=True)
+                            print(f"[{thread_name}] Errore processamento {icao}: {e}", flush=True)
+                        finally:
+                            self._release_lock(icao)
+                            db.session.remove()
 
-                print(f"\nRaccolta completata! Totale voli processati: {total_saved}", flush=True)
+                # Execute tasks in parallel
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    futures = [executor.submit(process_wrapper, icao) for icao in active_airports]
+                    for _ in as_completed(futures):
+                        pass
+
+                print(f"\nRaccolta periodica completata.", flush=True)
 
             except Exception as e:
                 print(f"Errore generale nel job di raccolta dati: {e}", flush=True)
 
             finally:
                 db.session.remove()
+
+    def _process_airport_data(self, airport_icao, flight_data, interests):
+        c_dep = 0
+        c_arr = 0
+
+        if not flight_data or (not flight_data.get('departures') and not flight_data.get('arrivals')):
+            print(f"[{airport_icao}] Nessun dato voli da salvare.", flush=True)
+            return
+
+        db_success = False
+
+        try:
+            if flight_data.get('departures'):
+                c_dep = self._save_flights(airport_icao, flight_data['departures'], 'departure')
+
+            if flight_data.get('arrivals'):
+                c_arr = self._save_flights(airport_icao, flight_data['arrivals'], 'arrival')
+
+            print(f"-> DB OK {airport_icao}: Salvati {c_dep} partenze, {c_arr} arrivi.", flush=True)
+            db_success = True
+
+        except Exception as e:
+            db.session.rollback()
+            print(f"Errore critico salvataggio DB per {airport_icao}: {e}", flush=True)
+            db_success = False
+
+        if db_success:
+            messages_to_send = []
+            try:
+                for interest in interests:
+                    messages_to_send.append({
+                        'user_email': interest['user_email'],
+                        'airport_icao': airport_icao,
+                        'flights_count': c_dep + c_arr,
+                        'departures_count': c_dep,
+                        'arrivals_count': c_arr,
+                        'high_value': interest['high_value'],
+                        'low_value': interest['low_value']
+                    })
+            except Exception as e:
+                print(f"Errore lettura dati per invio Kafka {airport_icao}: {e}", flush=True)
+                return
+
+            max_kafka_retries = 5
+
+            for attempt in range(max_kafka_retries):
+                if not self.kafka_producer:
+                    with self.kafka_lock:
+                        if not self.kafka_producer:
+                            self._connect_kafka()
+
+                if self.kafka_producer:
+                    try:
+                        sent_count = 0
+                        for msg in messages_to_send:
+                            self.kafka_producer.send(self.topic, msg)
+                            sent_count += 1
+
+                        self.kafka_producer.flush()
+                        print(f"-> Kafka OK: Inviati {sent_count} alert per {airport_icao}.", flush=True)
+                        break
+
+                    except Exception as k_err:
+                        print(f"ERRORE Kafka per {airport_icao} (Tentativo {attempt+1}/{max_kafka_retries}): {k_err}", flush=True)
+                        try:
+                            self.kafka_producer.close()
+                        except:
+                            pass
+                        self.kafka_producer = None
+
+                        if attempt < max_kafka_retries - 1:
+                            print("Attendo 2 secondi prima di riprovare...", flush=True)
+                            time.sleep(2)
+                        else:
+                            print(f"-> Kafka ERROR: Impossibile inviare alert per {airport_icao} dopo {max_kafka_retries} tentativi.", flush=True)
+                else:
+                    if attempt < max_kafka_retries - 1:
+                        print(f"Kafka non disponibile. Riprovo tra 2s...", flush=True)
+                        time.sleep(2)
+                    else:
+                        print(f"-> Kafka ERROR: Impossibile connettersi. Alert saltati per {airport_icao}.", flush=True)
 
     def _save_flights(self, airport_icao, flight_data_list, flight_type):
         if not flight_data_list:
@@ -150,18 +323,25 @@ class DataCollectorScheduler:
             collected_at=datetime.now() # Update timestamp to know we saw this flight again
         )
 
-        try:
-            # ATOMIC EXECUTION:
-            # Execute the single massive query. This replaces hundreds of individual
-            # SELECT/INSERT/UPDATE queries, significantly reducing execution time.
-            db.session.execute(on_duplicate_key_query)
-            db.session.commit()
-            return len(insert_values)
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                db.session.execute(on_duplicate_key_query)
+                db.session.commit()
+                return len(insert_values)
 
-        except Exception as e:
-            db.session.rollback()
-            print(f"Errore bulk upsert per {airport_icao}: {e}", flush=True)
-            raise e
+            except Exception as e:
+                db.session.rollback()
+                error_str = str(e).lower()
+                if "deadlock" in error_str or "1213" in error_str:
+                    if attempt < max_retries - 1:
+                        sleep_time = random.uniform(0.5, 2.0) #Basically, to prevent deadlocks, we wait a random time before retrying (like exponential backoff)
+                        print(f"Deadlock rilevato per {airport_icao}. Riprovo ({attempt+1}/{max_retries})...", flush=True)
+                        time.sleep(sleep_time)
+                        continue
+
+                print(f"Errore bulk upsert per {airport_icao}: {e}", flush=True)
+                raise e
 
     def start(self, interval_hours=12):
         self.scheduler.add_job(
@@ -179,6 +359,12 @@ class DataCollectorScheduler:
     def stop(self):
         self.scheduler.shutdown()
         print("Scheduler fermato", flush=True)
+        if self.kafka_producer:
+            try:
+                self.kafka_producer.close()
+                print("Producer Kafka chiuso correttamente.", flush=True)
+            except Exception as e:
+                print(f"Errore durante la chiusura del Producer: {e}", flush=True)
 
     def get_jobs(self):
         return self.scheduler.get_jobs()
