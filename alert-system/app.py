@@ -2,9 +2,16 @@ from kafka import KafkaConsumer, KafkaProducer
 import json
 import os
 import time
+import signal
 
 def main():
     print("Avvio Alert System Service...", flush=True)
+
+    def handle_sigterm(*args):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, handle_sigterm)
+    signal.signal(signal.SIGTERM, handle_sigterm)
 
     kafka_bootstrap_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
     topic_in = 'to-alert-system'

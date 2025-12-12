@@ -65,7 +65,7 @@ class OpenSkyClient:
 
     def get_departures(self, airport_icao, begin_timestamp=None, end_timestamp=None):
         if not begin_timestamp:
-            begin_timestamp = int((datetime.now() - timedelta(hours=6)).timestamp())
+            begin_timestamp = int((datetime.now() - timedelta(hours=12)).timestamp())
         if not end_timestamp:
             end_timestamp = int(datetime.now().timestamp())
 
@@ -118,7 +118,7 @@ class OpenSkyClient:
 
     def get_arrivals(self, airport_icao, begin_timestamp=None, end_timestamp=None):
         if not begin_timestamp:
-            begin_timestamp = int((datetime.now() - timedelta(hours=6)).timestamp())
+            begin_timestamp = int((datetime.now() - timedelta(hours=12)).timestamp())
         if not end_timestamp:
             end_timestamp = int(datetime.now().timestamp())
 

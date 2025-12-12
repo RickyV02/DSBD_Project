@@ -4,7 +4,7 @@
 
 ## Descrizione del Progetto
 
-Questo repository ospita l'evoluzione di un sistema distribuito a microservizi per il monitoraggio del traffico aereo. Rispetto alla versione precedente (disponibile nel branch `homework 1`), l'architettura è stata estesa per supportare l'utilizzo di: Broker Kafka per l'invio di messaggi verso gli utenti registrati, API Gateway tramite Nginx e il pattern Circuit Breaker per proteggere le chiamate verso OpenSky Network. Per eventuali chiarimenti, controllare il branch `homework 1`.
+Questo repository ospita l'evoluzione di un sistema distribuito a microservizi per il monitoraggio del traffico aereo. Rispetto alla versione precedente (disponibile nel branch `homework-1`), l'architettura è stata estesa per supportare l'utilizzo di: Broker Kafka per l'invio di messaggi verso gli utenti registrati, API Gateway tramite Nginx e il pattern Circuit Breaker per proteggere le chiamate verso OpenSky Network. Per eventuali chiarimenti, controllare il branch `homework-1`.
 
 Il sistema permette ora non solo di raccogliere dati da OpenSky Network, ma di monitorare soglie personalizzate di traffico aereo (`high_value`, `low_value`) e inviare notifiche via email in tempo reale grazie a una pipeline di elaborazione basata su eventi.
 
@@ -65,6 +65,12 @@ flowchart TD
     Kafka -.->|Invio risultati check soglie| ANS
     ANS -->|Email generate| Gmail
 
+    style Client fill:#ff9f43,stroke:#e67e22,color:#fff
+    style OpenSky fill:#1dd1a1,stroke:#10ac84,color:#fff
+    style UM fill:#54a0ff,stroke:#2e86de,color:#fff
+    style DC fill:#54a0ff,stroke:#2e86de,color:#fff
+    style UDB fill:#ff6b6b,stroke:#ee5253,color:#fff
+    style DDB fill:#ff6b6b,stroke:#ee5253,color:#fff
     style Nginx fill:#2d3436,stroke:#fff,color:#fff
     style Kafka fill:#000,stroke:#f1c40f,color:#fff
     style AS fill:#e17055,stroke:#fff,color:#fff
@@ -92,7 +98,7 @@ Tutto il traffico in ingresso è ora gestito da **Nginx**, configurato come Reve
 L'introduzione di **Apache Kafka** ha introdotto il seguente schema di messaging:
 
 - **Data Collector (Producer)**: Pubblica i dati aggiornati sul topic `to-alert-system`.
-- **Alert System (Producer&Consumer)**: Analizza i dati rispetto alle soglie utente (`high/low value`) e genera eventi di notifica.
+- **Alert System (Producer&Consumer)**: Analizza i dati rispetto alle soglie utente (`high/low value`) e genera eventi di notifica sul topic `to-notifier`.
 - **Alert Notifier (Consumer)**: Gestisce l'invio fisico delle email tramite server SMTP.
 
 ### 3. Pattern Circuit Breaker
@@ -124,7 +130,7 @@ L'accesso avviene ora esclusivamente tramite **HTTPS sulla porta 443** (localhos
 | Metodo | Endpoint                         | Descrizione                                                                            |
 | ------ | -------------------------------- | -------------------------------------------------------------------------------------- |
 | GET    | `/health`                        | Health check del servizio (include stato scheduler).                                   |
-| POST   | `/interests`                     | Aggiunta di un aeroporto di interesse (verifica esistenza utente via gRPC).            |
+| POST   | `/interests`                     | Aggiunta di un aeroporto di interesse (verifica esistenza utente via gRPC), è possibile specificare i parametri OPZIONALI (`high_value`, `low_value`)|
 | GET    | `/interests/{email}`             | Recupero lista interessi di un utente.                                                 |
 | DELETE | `/interests`                     | Rimozione di un interesse specifico (query params: `email`, `airport_icao`).           |
 | GET    | `/flights/{airport_icao}`                | Lista voli per aeroporto (filtri: `email`, `type`, `start_date`, `end_date`, `limit`). |
@@ -216,7 +222,7 @@ Per testare rapidamente tutte le funzionalità del sistema, è disponibile una c
 
 1. **Importare la collection**: Aprire Postman e importare il file `postman_collection.json` presente nella root del repository.
 
-2. **Configurare le variabili**: La collection utilizza variabili d'ambiente per gli URL base dei servizi e anche per alcune variabili delle API REST implementate, chiaramente è possibile modificarle per avere ulteriori test custom.
+2. **Configurare le variabili**: La collection utilizza variabili d'ambiente per gli URL dei servizi e anche per alcune variabili delle API REST implementate, chiaramente è possibile modificarle per avere ulteriori test custom.
 
 3. **Eseguire i test**: La collection include esempi pre-configurati per tutti gli endpoint, organizzati per servizio.
 
@@ -225,6 +231,8 @@ Per testare rapidamente tutte le funzionalità del sistema, è disponibile una c
 > **⚠️ Nota sul Primo Avvio (Cold Start):**
 > Alla prima esecuzione, Kafka e MySQL potrebbero impiegare circa 20-30 secondi per inizializzare i volumi e i topic interni. Se i container Python si riavviano inizialmente ("restarting"), è un comportamento normale di auto-guarigione. Attendere che Nginx e i servizi siano stabili prima di lanciare richieste tramite Postman.
 
+>**⚠️ Nota sulle API di OpenSky Network:**
+>Durante lo sviluppo di questa seconda iterazione, sono emerse criticità durante la raccolta dei dati tramite le API di OpenSky Network; in particolare, gli endpoint utilizzati all'interno del file `opensky_client.py`, ossia `GET /flights/departure` e `GET /flights/arrival`, hanno avuto bisogno di un fix sulla finestra temporale dei dati dei voli richiesti. Precisamente, nella precedente iterazione venivano raccolte ogni 12 ore i dati delle ultime 24, mentre adesso la finestra di raccolta è stata ridotta a 12 ore, TUTTAVIA potrebbe essere necessario ridurla anche ad un valore di 6 ore. Sebbene al momento della scrittura di questa nota il problema dovrebbe essersi risolto, viene lasciato il valore di 12 ore per safety del funzionamento del sistema.
 ---
 
 ## Struttura del Repository

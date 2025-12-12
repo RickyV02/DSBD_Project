@@ -6,6 +6,7 @@ from grpc_client import UserManagerClient
 from opensky_client import OpenSkyClient
 from scheduler import DataCollectorScheduler
 import os
+import signal
 import re
 from sqlalchemy import func
 from datetime import datetime, timedelta, timezone
@@ -577,6 +578,13 @@ def scheduler_status():
         return jsonify({"error": f"Errore: {str(e)}"}), 500
 
 if __name__ == '__main__':
+
+    def handle_sigterm(*args):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, handle_sigterm)
+    signal.signal(signal.SIGTERM, handle_sigterm)
+
     print("Avvio Data Collector Service...", flush=True)
     print(f"REST API sulla porta 5001", flush=True)
     print(f"gRPC Server sulla porta 50052", flush=True)
@@ -586,6 +594,10 @@ if __name__ == '__main__':
 
     try:
         app.run(host='0.0.0.0', port=5001, debug=False)
+    except KeyboardInterrupt:
+        print("\nRicevuto segnale di stop. Avvio chiusura...", flush=True)
     finally:
+        print("Fermando lo scheduler e i client...", flush=True)
         scheduler.stop()
         user_manager_client.close()
+        print("Data Collector chiuso correttamente.", flush=True)

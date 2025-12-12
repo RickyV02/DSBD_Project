@@ -5,6 +5,7 @@ import time
 import smtplib
 import ssl
 from email.message import EmailMessage
+import signal
 
 SMTP_SERVER = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
 SMTP_PORT = int(os.getenv('SMTP_PORT', 465))
@@ -31,6 +32,12 @@ def send_email(recipient_email, subject, body):
 
 def main():
     print("Avvio Alert Notifier System...", flush=True)
+
+    def handle_sigterm(*args):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, handle_sigterm)
+    signal.signal(signal.SIGTERM, handle_sigterm)
 
     kafka_bootstrap_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
     topic_in = 'to-notifier'
