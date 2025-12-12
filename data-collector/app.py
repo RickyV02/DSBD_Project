@@ -597,7 +597,7 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("\nRicevuto segnale di stop. Avvio chiusura...", flush=True)
     finally:
-        print("Fermando lo scheduler e i client...", flush=True)
+        print("Fermando lo scheduler e il client gRPC...", flush=True)
         scheduler.stop()
         user_manager_client.close()
         print("Data Collector chiuso correttamente.", flush=True)

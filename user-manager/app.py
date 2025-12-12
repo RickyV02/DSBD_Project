@@ -5,6 +5,7 @@ from models import User, RequestCache
 import grpc_server
 import threading
 import os
+import signal
 import hashlib
 import re
 import uuid
@@ -326,7 +327,22 @@ def verify_user(email):
         return jsonify({"error": f"Errore durante la verifica: {str(e)}"}), 500
 
 if __name__ == '__main__':
+
+    def handle_sigterm(*args):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, handle_sigterm)
+    signal.signal(signal.SIGTERM, handle_sigterm)
+
     print("Avvio User Manager Service...", flush=True)
     print("REST API sulla porta 5000", flush=True)
     print("gRPC Server sulla porta 50051", flush=True)
-    app.run(host='0.0.0.0', port=5000, debug=False)
+
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=False)
+    except KeyboardInterrupt:
+        print("\nRicevuto segnale di stop. Avvio chiusura...", flush=True)
+    finally:
+        print("Chiusura User Manager...", flush=True)
+        data_collector_client.close()
+        print("User Manager chiuso correttamente.", flush=True)
