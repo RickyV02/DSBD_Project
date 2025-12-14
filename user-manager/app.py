@@ -5,6 +5,7 @@ from models import User, RequestCache
 import grpc_server
 import threading
 import os
+import signal
 import hashlib
 import re
 import uuid
@@ -89,10 +90,16 @@ def is_valid_uuid(val):
     except ValueError:
         return False
 
-# Helper to identify the client (simplified version using IP address)
-# Note: In Docker, this might reflect the Gateway IP, but it's just a demonstration of Client recognition.
+# Helper to identify the client via hashed IP address
 def get_client_id():
-    ip = request.remote_addr or "unknown"
+    ip = request.headers.get('X-Real-IP') # Try to get the real client IP from Nginx header
+
+    if not ip:
+        ip = request.remote_addr or "unknown" # Fallback to remote_addr if header not present (that's the case without Nginx, like in Postman tests directly to Flask in the previous version).
+
+    # Basically, if there is not Nginx and we contact Flask via postman, remote_addr is the IP of the client.
+    # If there is Nginx, it passes the real client IP in X-Real-IP header (otherwise remote_addr is Nginx's gateway IP, which is useless for us).
+
     return hashlib.sha256(ip.encode()).hexdigest()
 
 @app.route('/health', methods=['GET'])
@@ -320,7 +327,22 @@ def verify_user(email):
         return jsonify({"error": f"Errore durante la verifica: {str(e)}"}), 500
 
 if __name__ == '__main__':
+
+    def handle_sigterm(*args):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, handle_sigterm)
+    signal.signal(signal.SIGTERM, handle_sigterm)
+
     print("Avvio User Manager Service...", flush=True)
     print("REST API sulla porta 5000", flush=True)
     print("gRPC Server sulla porta 50051", flush=True)
-    app.run(host='0.0.0.0', port=5000, debug=False)
+
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=False)
+    except KeyboardInterrupt:
+        print("\nRicevuto segnale di stop. Avvio chiusura...", flush=True)
+    finally:
+        print("Chiusura User Manager...", flush=True)
+        data_collector_client.close()
+        print("User Manager chiuso correttamente.", flush=True)

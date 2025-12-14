@@ -1,5 +1,6 @@
 from database import db
 from datetime import datetime, timezone
+from sqlalchemy import CheckConstraint
 
 class UserInterest(db.Model):
     __tablename__ = 'user_interests'
@@ -7,15 +8,26 @@ class UserInterest(db.Model):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     user_email = db.Column(db.String(255), nullable=False)
     airport_icao = db.Column(db.String(10), nullable=False)
+    high_value = db.Column(db.Integer, nullable=True)
+    low_value = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
-    __table_args__ = (db.UniqueConstraint('user_email', 'airport_icao', name='unique_user_interest'),)
+    __table_args__ = (
+        db.UniqueConstraint('user_email', 'airport_icao', name='unique_user_interest'),
+
+        CheckConstraint(
+            '(high_value IS NULL) OR (low_value IS NULL) OR (high_value > low_value)',
+            name='check_high_gt_low'
+        ),
+    )
 
     def to_dict(self):
         return {
             'id': self.id,
             'user_email': self.user_email,
             'airport_icao': self.airport_icao,
+            'high_value': self.high_value,
+            'low_value': self.low_value,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 

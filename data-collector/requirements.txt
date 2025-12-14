@@ -7,3 +7,4 @@ grpcio==1.60.0
 grpcio-tools==1.60.0
 requests==2.31.0
 APScheduler==3.10.4
+kafka-python==2.3.0
