@@ -21,6 +21,22 @@ class OpenSkyClient:
 
         self.cb = CircuitBreaker(failure_threshold=3, recovery_timeout=60)
 
+    def _make_http_call(self, method, url, **kwargs): # This method is wrapped by the Circuit Breaker (it's like a bridge where we can handle errors)
+
+        # So, the CB calls this method, which performs the actual HTTP request
+        # If the response is a 5xx or 429, we raise an exception to trigger the CB logic
+        # The CB will except these exceptions called here and raise them up to the caller (e.g., get_departures)
+
+        response = method(url, **kwargs) # Here is where we make the actual HTTP call
+
+        if 500 <= response.status_code < 600: # Server Errors (e.g., Internal Server Error, Bad Gateway, etc.)
+            raise Exception(f"Server Error: {response.status_code}")
+
+        if response.status_code == 429: # Rate Limit (Too Many Requests)
+            raise Exception("Rate Limit Exceeded")
+
+        return response # Return codes like 404 or 401 are handled in the caller methods, since they are NOT errors for our logic (neither for the API nor for the CB)
+
     def _perform_login(self):
         print(f"[Thread {threading.current_thread().name}] Richiesta nuovo Token di accesso a OpenSky...", flush=True)
         payload = {
@@ -29,7 +45,7 @@ class OpenSkyClient:
             'client_secret': self.client_secret
         }
         try:
-            response = self.cb.call(requests.post, self.auth_url, data=payload, timeout=10)
+            response = self.cb.call(self._make_http_call, requests.post, self.auth_url, data=payload, timeout=10)
 
             if response.status_code == 200:
                 data = response.json()
@@ -65,7 +81,7 @@ class OpenSkyClient:
 
     def get_departures(self, airport_icao, begin_timestamp=None, end_timestamp=None):
         if not begin_timestamp:
-            begin_timestamp = int((datetime.now() - timedelta(hours=12)).timestamp())
+            begin_timestamp = int((datetime.now() - timedelta(hours=24)).timestamp())
         if not end_timestamp:
             end_timestamp = int(datetime.now().timestamp())
 
@@ -75,7 +91,7 @@ class OpenSkyClient:
         try:
             print(f"Recupero partenze da {airport_icao}...", flush=True)
             # We call get_headers() which handles token refresh automatically
-            response = self.cb.call(requests.get, url, params=params, headers=self.get_headers(), timeout=30)
+            response = self.cb.call(self._make_http_call, requests.get, url, params=params, headers=self.get_headers(), timeout=30)
 
             if response.status_code == 200:
                 try:
@@ -100,25 +116,21 @@ class OpenSkyClient:
                 print(f"Nessun dato trovato per {airport_icao}", flush=True)
                 return []
 
-            elif response.status_code == 429:
-                # Rate Limiting handling
-                print(f"RATE LIMIT EXCEEDED per {airport_icao}. Attendi un minuto...", flush=True)
+            else:
+                print(f"Errore inatteso {response.status_code} per {airport_icao}", flush=True)
                 return []
 
-            else:
-                print(f"Errore API: {response.status_code}", flush=True)
-                print(f"Risposta Server: {response.text}", flush=True)
-                return []
         except CircuitBreakerOpenException:
             print(f"CircuitBreaker OPEN: Saltata richiesta per {airport_icao}", flush=True)
             return []
         except Exception as e:
-            print(f"Errore richiesta: {str(e)}", flush=True)
+            # Here we handle: 500 errors, 429 Rate Limits, Timeouts, etc.
+            print(f"Errore richiesta (Server/Network/RateLimit): {str(e)}", flush=True)
             return []
 
     def get_arrivals(self, airport_icao, begin_timestamp=None, end_timestamp=None):
         if not begin_timestamp:
-            begin_timestamp = int((datetime.now() - timedelta(hours=12)).timestamp())
+            begin_timestamp = int((datetime.now() - timedelta(hours=24)).timestamp())
         if not end_timestamp:
             end_timestamp = int(datetime.now().timestamp())
 
@@ -127,7 +139,7 @@ class OpenSkyClient:
 
         try:
             print(f"Recupero arrivi a {airport_icao}...", flush=True)
-            response = self.cb.call(requests.get, url, params=params, headers=self.get_headers(), timeout=30)
+            response = self.cb.call(self._make_http_call, requests.get, url, params=params, headers=self.get_headers(), timeout=30)
 
             if response.status_code == 200:
                 try:
@@ -145,19 +157,15 @@ class OpenSkyClient:
             elif response.status_code == 404:
                 return []
 
-            elif response.status_code == 429:
-                print(f"RATE LIMIT EXCEEDED per {airport_icao}. Attendi un minuto...", flush=True)
+            else:
+                print(f"Errore inatteso {response.status_code} per {airport_icao}", flush=True)
                 return []
 
-            else:
-                print(f"Errore API: {response.status_code}", flush=True)
-                print(f"Risposta Server: {response.text}", flush=True)
-                return []
         except CircuitBreakerOpenException:
             print(f"CircuitBreaker OPEN: Saltata richiesta per {airport_icao}", flush=True)
             return []
         except Exception as e:
-            print(f"Errore richiesta: {str(e)}", flush=True)
+            print(f"Errore richiesta (Server/Network/RateLimit): {str(e)}", flush=True)
             return []
 
     def get_flights_for_airport(self, airport_icao, begin_timestamp=None, end_timestamp=None):

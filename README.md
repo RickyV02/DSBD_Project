@@ -233,6 +233,7 @@ Per testare rapidamente tutte le funzionalità del sistema, è disponibile una c
 
 >**⚠️ Nota sulle API di OpenSky Network:**
 >Durante lo sviluppo di questa seconda iterazione, sono emerse criticità durante la raccolta dei dati tramite le API di OpenSky Network; in particolare, gli endpoint utilizzati all'interno del file `opensky_client.py`, ossia `GET /flights/departure` e `GET /flights/arrival`, hanno avuto bisogno di un fix sulla finestra temporale dei dati dei voli richiesti. Precisamente, nella precedente iterazione venivano raccolte ogni 12 ore i dati delle ultime 24, mentre adesso la finestra di raccolta è stata ridotta a 12 ore, TUTTAVIA potrebbe essere necessario ridurla anche ad un valore di 6 ore. Sebbene al momento della scrittura di questa nota il problema dovrebbe essersi risolto, viene lasciato il valore di 12 ore per safety del funzionamento del sistema.
+**EDIT del 17/12/2025**: è stata rimessa la finestra di 24 ore in quanto il problema (a detta degli admin di OpenSky Network) dovrebbe essere stato totalmente sistemato.
 ---
 
 ## Struttura del Repository
