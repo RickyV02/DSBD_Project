@@ -270,7 +270,8 @@ def delete_user(email):
 
         if not grpc_success:
             # The remote dependency failed. Since we haven't modified the local DB yet,
-            # we just abort. No rollback needed (session is clean), but we ensure consistency.
+            # we just abort. No rollback needed (session is clean), but we ensure consistency and we do it just for safety.
+            db.session.rollback()
             return jsonify({
                 "error": "Impossibile completare la cancellazione: Errore di comunicazione con Data Collector.",
                 "details": grpc_msg
