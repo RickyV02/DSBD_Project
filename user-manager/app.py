@@ -261,36 +261,62 @@ def delete_user(email):
 
         user_dict = user.to_dict()
 
-        try:
-            # We mark the user for deletion in the session, but we do NOT commit yet.
-            db.session.delete(user)
+        # PHASE 1: PIVOT TRANSACTION (gRPC Remote Cleanup)
+        # We verify if the remote cleanup on Data Collector is successful first.
+        # This acts as a "Pre-Commit Check" and our Point of No Return.
+        # Note: We haven't touched the local DB session yet to keep it clean.
 
-            # Before committing the irreversible local deletion, we verify if the remote cleanup
-            # on Data Collector is successful. This acts as a "Pre-Commit Check".
-            # If Data Collector is down or fails, we abort the whole operation to maintain consistency.
-            grpc_success, grpc_msg = data_collector_client.delete_interests(clean_email)
+        grpc_success, grpc_msg = data_collector_client.delete_interests(clean_email) # THIS IS A PIVOT TRANSACTIONAL STEP
 
-            if not grpc_success:
-                # The remote dependency failed. To ensure atomicity (all or nothing),
-                # we rollback the local deletion. The user remains in the DB.
-                db.session.rollback()
-                return jsonify({
-                    "error": "Impossibile completare la cancellazione: Errore di comunicazione con Data Collector.",
-                    "details": grpc_msg
-                }), 503 # Service Unavailable
-
-            # Remote call was successful. We can now safely commit the local change.
-            db.session.commit()
-
+        if not grpc_success:
+            # The remote dependency failed. Since we haven't modified the local DB yet,
+            # we just abort. No rollback needed (session is clean), but we ensure consistency.
             return jsonify({
-                "message": "Utente eliminato con successo",
-                "user": user_dict,
-                "data_cleanup": "Completed"
-            }), 200
+                "error": "Impossibile completare la cancellazione: Errore di comunicazione con Data Collector.",
+                "details": grpc_msg
+            }), 503 # Service Unavailable
 
-        except Exception as db_err: #If the remote call was successful but local deletion fails, the user remains in DB but with no interests in Data Collector.
-            db.session.rollback()
-            raise db_err
+        # PHASE 2: RETRYABLE TRANSACTION (Local Commit with Hybrid Retry)
+        # Remote call was successful. We can now safely commit the local change.
+        # Since we passed the Pivot, this step MUST succeed eventually.
+        # We implement a Short-Term Retry mechanism here to handle transient DB locks/errors.
+
+        MAX_RETRIES = 3
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                # We mark the user for deletion.
+                # IMPORTANT: We use merge() because if a previous attempt in this loop failed
+                # and rolled back, the 'user' object might be detached from the session.
+                user_to_delete = db.session.merge(user)
+                db.session.delete(user_to_delete)
+
+                # RETRIABLE OPERATION: Attempting to commit local changes.
+                db.session.commit()
+
+                # Success!
+                return jsonify({
+                    "message": "Utente eliminato con successo",
+                    "user": user_dict,
+                    "data_cleanup": "Completed"
+                }), 200
+
+            except Exception as db_err:
+                # If local deletion fails, the user remains in DB but with no interests in Data Collector.
+                # We rollback this specific attempt.
+                db.session.rollback()
+
+                if attempt < MAX_RETRIES - 1:
+                    # Short-Term Retry: Wait a bit and try again (Forward Recovery).
+                    print(f"Commit Locale fallito (tentativo {attempt+1}/{MAX_RETRIES}). Ritento...", flush=True)
+                    time.sleep(0.5)
+                    continue
+                else:
+                    # If we run out of retries, we raise the error.
+                    # This triggers the 500 response, delegating the Long-Term Retry to the client.
+                    # Thanks to Idempotency on Data Collector, the user can safely retry later.
+                    print(f"Errore critico al DB dopo {MAX_RETRIES} tentativi. Delego al client di ritentare la cancellazione.", flush=True)
+                    raise db_err
 
     except Exception as e:
         return jsonify({"error": f"Errore durante l'eliminazione: {str(e)}"}), 500
