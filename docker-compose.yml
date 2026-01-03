@@ -217,7 +217,7 @@ services:
         networks:
             - shared-net
         healthcheck:
-            test: ["CMD", "curl", "-f", "http://localhost/health"]
+            test: ["CMD", "curl", "-f", "-k", "https://localhost/health"]
             interval: 10s
             timeout: 5s
             retries: 5
