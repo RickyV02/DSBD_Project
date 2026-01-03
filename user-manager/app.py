@@ -21,10 +21,30 @@ CORS(app)
 # Configs for Database
 app.config['SQLALCHEMY_DATABASE_URI'] = f"mysql+pymysql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False # to suppress warnings (disables signaling feature, avoiding overhead)
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True, # Enable pool pre-ping to avoid stale connections
+    'pool_recycle': 3600, # Recycle connections after 1 hour
+    'pool_size': 10, # Set the pool size
+    'pool_timeout': 30,  #Timeout for getting a connection from the pool
+    'max_overflow': 20 # Allow overflow connections
+}
 
 db.init_app(app)
 
+def wait_for_db(app):
+    print("Verifica connessione al Database...", flush=True)
+    with app.app_context():
+        while True:
+            try:
+                with db.engine.connect() as connection:
+                    print("Database pronto! Connessione stabilita.", flush=True)
+                    return
+            except Exception as e:
+                print(f"Database non pronto ({str(e)}). Riprovo tra 3 secondi...", flush=True)
+                time.sleep(3)
+
 with app.app_context():
+    wait_for_db(app)
     db.create_all()
 
 # In order to handle both REST and gRPC servers, we start the gRPC server in a separate thread !

@@ -8,6 +8,7 @@ from scheduler import DataCollectorScheduler
 import os
 import signal
 import re
+import time
 from sqlalchemy import func
 from datetime import datetime, timedelta, timezone
 import threading
@@ -29,7 +30,20 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 
 db.init_app(app)
 
+def wait_for_db(app):
+    print("Verifica connessione al Database...", flush=True)
+    with app.app_context():
+        while True:
+            try:
+                with db.engine.connect() as connection:
+                    print("Database pronto! Connessione stabilita.", flush=True)
+                    return
+            except Exception as e:
+                print(f"Database non pronto ({str(e)}). Riprovo tra 3 secondi...", flush=True)
+                time.sleep(3)
+
 with app.app_context():
+    wait_for_db(app)
     db.create_all()
 
 def start_grpc_server():
