@@ -1,0 +1,67 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dsbd-ingress
+  namespace: dsbd-ns
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - localhost
+    secretName: nginx-ssl-secret
+
+  rules:
+  - host: localhost
+    http:
+      paths:
+      - path: /users
+        pathType: Prefix
+        backend:
+          service:
+            name: user-manager
+            port:
+              number: 5000
+
+      - path: /interests
+        pathType: Prefix
+        backend:
+          service:
+            name: data-collector
+            port:
+              number: 5001
+      - path: /flights
+        pathType: Prefix
+        backend:
+          service:
+            name: data-collector
+            port:
+              number: 5001
+      - path: /collect
+        pathType: Prefix
+        backend:
+          service:
+            name: data-collector
+            port:
+              number: 5001
+      - path: /scheduler
+        pathType: Prefix
+        backend:
+          service:
+            name: data-collector
+            port:
+              number: 5001
+
+      # Health check endpoints are not included in the ingress routing for the following reasons:
+      # - We should define another ingress that enables rewrite /health/users (or /health/data) to /health to access them from the outside.
+      # - This is to avoid exposing health check endpoints publicly, since they were meant for internal use only.
+
+      - path: /prometheus
+        pathType: Prefix
+        backend:
+          service:
+            name: prometheus
+            port:
+              number: 9090

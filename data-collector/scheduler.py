@@ -15,10 +15,16 @@ import time
 import random
 
 class DataCollectorScheduler:
-    def __init__(self, app: Flask, db, opensky_client: OpenSkyClient):
+    def __init__(self, app: Flask, db, opensky_client: OpenSkyClient, opensky_counter=None, processing_gauge=None, service_name='unknown', node_name='unknown'):
         self.app = app
         self.db = db
         self.opensky_client = opensky_client
+
+        self.opensky_counter = opensky_counter
+        self.processing_gauge = processing_gauge
+
+        self.common_labels = {'service': service_name, 'node': node_name}
+
         self.scheduler = BackgroundScheduler()
 
         self.kafka_producer = None
@@ -87,8 +93,14 @@ class DataCollectorScheduler:
                         return
 
                     try:
+                        if self.opensky_counter:
+                            self.opensky_counter.labels(**self.common_labels, status='attempt').inc()
                         flight_data = self.opensky_client.get_flights_for_airport(target_icao)
+                        if self.opensky_counter:
+                            self.opensky_counter.labels(**self.common_labels, status='success').inc()
                     except Exception as e:
+                        if self.opensky_counter:
+                            self.opensky_counter.labels(**self.common_labels, status='failure').inc()
                         print(f"[{thread_name}] Errore download {target_icao}: {e}", flush=True)
                         return
 
@@ -108,6 +120,8 @@ class DataCollectorScheduler:
             self._release_lock(target_icao)
 
     def collect_data_job(self):
+        start_time = time.time() # Start timer for Prometheus Gauge
+
         if not self.kafka_producer:
             print("Kafka Producer non connesso, tentando riconnessione...", flush=True)
             with self.kafka_lock:
@@ -138,6 +152,8 @@ class DataCollectorScheduler:
                         db.session.commit()
                         if deleted.rowcount > 0:
                             print(f"Pulizia completata: rimossi {deleted.rowcount} voli.", flush=True)
+                        if self.processing_gauge:
+                            self.processing_gauge.labels(**self.common_labels).set(time.time() - start_time)
                         return
                     else:
                         # Delete flight data where airport_icao is NOT IN active_airports
@@ -157,7 +173,7 @@ class DataCollectorScheduler:
 
                 print(f"Aeroporti da monitorare: {', '.join(active_airports)}", flush=True)
 
-                # Using a wrapper to handle locking per airport task
+                # Using a wrapper to handle locking per airport task (Note: "Counter" provided by Prometheus client is thread-safe, so no extra locking needed there)
                 def process_wrapper(icao):
                     with self.app.app_context():
                         thread_name = threading.current_thread().name
@@ -167,12 +183,22 @@ class DataCollectorScheduler:
 
                         try:
                             print(f"[{thread_name}] Richiedo dati per {icao} a OpenSky...", flush=True)
+
+                            if self.opensky_counter:
+                                self.opensky_counter.labels(**self.common_labels, status='attempt').inc()
+
                             data = self.opensky_client.get_flights_for_airport(icao)
+
+                            if self.opensky_counter:
+                                self.opensky_counter.labels(**self.common_labels, status='success').inc()
+
                             if data:
                                 print(f"[{thread_name}] Dati scaricati per {icao}, elaborazione...", flush=True)
                                 self._process_airport_data(icao, data, airport_interests[icao])
                                 print(f"[{thread_name}] Elaborazione completata per {icao}.", flush=True)
                         except Exception as e:
+                            if self.opensky_counter:
+                                self.opensky_counter.labels(**self.common_labels, status='failure').inc()
                             print(f"[{thread_name}] Errore processamento {icao}: {e}", flush=True)
                         finally:
                             self._release_lock(icao)
@@ -185,6 +211,10 @@ class DataCollectorScheduler:
                         pass
 
                 print(f"\nRaccolta periodica completata.", flush=True)
+
+                if self.processing_gauge:
+                    elapsed = time.time() - start_time
+                    self.processing_gauge.labels(**self.common_labels).set(elapsed)
 
             except Exception as e:
                 print(f"Errore generale nel job di raccolta dati: {e}", flush=True)
@@ -307,6 +337,8 @@ class DataCollectorScheduler:
         if not insert_values:
             return 0
 
+        insert_values.sort(key=lambda x: x['icao24']) # Sorting to reduce deadlocks on concurrent inserts
+
         query = insert(FlightData).values(insert_values)
 
         # "ON DUPLICATE KEY UPDATE" clause:
@@ -352,9 +384,10 @@ class DataCollectorScheduler:
             name='Raccolta Dati Voli',
             replace_existing=True
         )
-        self.collect_data_job()
         self.scheduler.start()
         print(f"Scheduler avviato: raccolta ogni {interval_hours} ore", flush=True)
+        print("Avvio raccolta iniziale in background...", flush=True)
+        threading.Thread(target=self.collect_data_job).start()
 
     def stop(self):
         self.scheduler.shutdown()

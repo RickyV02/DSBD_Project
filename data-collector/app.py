@@ -13,9 +13,60 @@ from sqlalchemy import func
 from datetime import datetime, timedelta, timezone
 import threading
 import grpc_server
+from prometheus_client import make_wsgi_app, Counter, Gauge
+from werkzeug.middleware.dispatcher import DispatcherMiddleware
 
 app = Flask(__name__)
 CORS(app)
+
+NODE_NAME = os.getenv('K8S_NODE_NAME', 'unknown-node')
+SERVICE_NAME = 'data-collector'
+
+# 1. Counter Metric: Number of calls made to OpenSky API
+# Labels: service, node, status (attempt, success, failure)
+OPENSKY_CALLS_COUNTER = Counter(
+    'opensky_api_calls_total',
+    'Total number of calls to OpenSky API',
+    ['service', 'node', 'status']
+)
+
+# 2. Gauge Metric: Time taken to fetch and store flight data during each periodic collection
+# Labels: service, node
+FLIGHT_PROCESSING_GAUGE = Gauge(
+    'flight_data_processing_seconds',
+    'Time taken to fetch and store flight data during periodic collection',
+    ['service', 'node']
+)
+
+# 3. Counter Metric: Total HTTP requests processed by the Flask app
+# Labels: method, endpoint, status code, service, node
+HTTP_REQUESTS_TOTAL = Counter(
+    'http_requests_total',
+    'Total number of HTTP requests processed',
+    ['method', 'endpoint', 'status', 'service', 'node']
+)
+
+# Middleware to expose /metrics endpoint
+app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {
+    '/metrics': make_wsgi_app()
+})
+
+# Hook to increment HTTP_REQUESTS_TOTAL after each request
+@app.after_request
+def record_request_data(response):
+    if request.path == '/metrics':
+        return response
+    try:
+        HTTP_REQUESTS_TOTAL.labels(
+            method=request.method,
+            endpoint=request.path,
+            status=str(response.status_code),
+            service=SERVICE_NAME,
+            node=NODE_NAME
+        ).inc()
+    except Exception as e:
+        print(f"[Prometheus] Errore: {e}", flush=True)
+    return response
 
 # Configs for Database
 app.config['SQLALCHEMY_DATABASE_URI'] = f"mysql+pymysql://{os.getenv('DATA_DB_USER')}:{os.getenv('DATA_DB_PASSWORD')}@{os.getenv('DATA_DB_HOST')}:{os.getenv('DATA_DB_PORT')}/{os.getenv('DATA_DB_NAME')}"
@@ -42,9 +93,31 @@ def wait_for_db(app):
                 print(f"Database non pronto ({str(e)}). Riprovo tra 3 secondi...", flush=True)
                 time.sleep(3)
 
+def initialize_metrics(app):
+    print("[Prometheus] Inizializzazione metriche...", flush=True)
+    with app.app_context():
+        try:
+            FLIGHT_PROCESSING_GAUGE.labels(service=SERVICE_NAME, node=NODE_NAME).set(0)
+            print("[Prometheus] Gauge Flight Processing inizializzato a 0.", flush=True)
+        except Exception as e:
+            print(f"[Prometheus] Errore inizializzazione Gauge: {e}", flush=True)
+
+        statuses = ['attempt', 'success', 'failure']
+        try:
+            for status in statuses:
+                OPENSKY_CALLS_COUNTER.labels(
+                    service=SERVICE_NAME,
+                    node=NODE_NAME,
+                    status=status
+                ).inc(0)  # Initialize to 0
+            print(f"[Prometheus] Counter OpenSky inizializzato per stati: {statuses}", flush=True)
+        except Exception as e:
+             print(f"[Prometheus] Errore init Counter OpenSky: {e}", flush=True)
+
 with app.app_context():
     wait_for_db(app)
     db.create_all()
+    initialize_metrics(app)
 
 def start_grpc_server():
     print("Avvio thread server gRPC Data Collector...", flush=True)
@@ -56,7 +129,16 @@ grpc_thread.start()
 user_manager_client = UserManagerClient()
 opensky_client = OpenSkyClient()
 
-scheduler = DataCollectorScheduler(app, db, opensky_client)
+scheduler = DataCollectorScheduler(
+    app,
+    db,
+    opensky_client,
+    opensky_counter=OPENSKY_CALLS_COUNTER,
+    processing_gauge=FLIGHT_PROCESSING_GAUGE,
+    service_name=SERVICE_NAME,
+    node_name=NODE_NAME
+)
+
 collection_interval = int(os.getenv('COLLECTION_INTERVAL_HOURS', '12'))
 
 def is_valid_email(email):
@@ -575,7 +657,7 @@ def get_airline_stats(airport_icao):
 @app.route('/collect/manual', methods=['POST'])
 def manual_collection():
     try:
-        scheduler.collect_data_job()
+        threading.Thread(target=scheduler.collect_data_job).start() # Run in separate thread (performance improvement, we don't block the HTTP response)
         return jsonify({"message": "Raccolta dati avviata manualmente"}), 200
     except Exception as e:
         return jsonify({"error": f"Errore: {str(e)}"}), 500
@@ -604,7 +686,7 @@ if __name__ == '__main__':
     print(f"gRPC Server sulla porta 50052", flush=True)
     print(f"Raccolta dati ogni {collection_interval} ore", flush=True)
 
-    scheduler.start(interval_hours=collection_interval) # Start the scheduler, it will run in background (threaded)
+    scheduler.start(interval_hours=collection_interval)
 
     try:
         app.run(host='0.0.0.0', port=5001, debug=False)

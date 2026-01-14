@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: dsbd-ns
+data:
+  # --- Database Names ---
+  MYSQL_DATABASE_USER: "userdb"
+  MYSQL_DATABASE_DATA: "datadb"
+
+  # --- Hosts---
+  DB_HOST: "user-db"
+  DATA_DB_HOST: "data-db"
+  USER_MANAGER_HOST: "user-manager"
+  DATA_COLLECTOR_HOST: "data-collector"
+
+  # --- Ports ---
+  USER_DB_PORT: "3306"
+  DATA_DB_PORT: "3306"
+  DB_INTERNAL_PORT: "3306"
+
+  # App Ports
+  USER_MANAGER_PORT: "5000"
+  DATA_COLLECTOR_PORT: "5001"
+  USER_MANAGER_GRPC_PORT: "50051"
+  DATA_COLLECTOR_GRPC_PORT: "50052"
+
+  # --- Kafka ---
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+
+  # --- App Config ---
+  COLLECTION_INTERVAL_HOURS: "12"
+
+  # --- Email ---
+  SMTP_SERVER: "smtp.gmail.com"
+  SMTP_PORT: "465"
+  SENDER_EMAIL: "alertnotifiersystemdsbd@gmail.com"

@@ -26,7 +26,11 @@ class DataCollectorClient:
         }
 
         options = [
-            ('grpc.service_config', json.dumps(service_config))
+            ('grpc.service_config', json.dumps(service_config)),
+            ('grpc.keepalive_time_ms', 10000),
+            ('grpc.keepalive_timeout_ms', 5000),
+            ('grpc.keepalive_permit_without_calls', 1),
+            ('grpc.http2.max_pings_without_data', 0),
         ]
 
         target = f'{self.host}:{self.port}'

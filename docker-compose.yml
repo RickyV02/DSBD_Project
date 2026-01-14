@@ -224,6 +224,35 @@ services:
             start_period: 20s
         restart: unless-stopped
 
+    prometheus:
+        image: prom/prometheus:latest
+        container_name: prometheus
+        expose:
+            - "9090"
+        volumes:
+            - ./prometheus.yml:/etc/prometheus/prometheus.yml
+            - prometheus-data:/prometheus
+        command:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--web.external-url=/prometheus'
+            - '--web.enable-lifecycle'
+        depends_on:
+            user-manager:
+                condition: service_healthy
+            data-collector:
+                condition: service_healthy
+        networks:
+            - shared-net
+            - kafka-net
+        healthcheck:
+            test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/prometheus/-/healthy"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 15s
+        restart: unless-stopped
+
 networks:
     user-net:
         driver: bridge
@@ -238,3 +267,4 @@ volumes:
     user-db-data:
     data-db-data:
     kafka-data:
+    prometheus-data:

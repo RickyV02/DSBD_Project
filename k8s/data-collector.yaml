@@ -1,0 +1,161 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-collector
+  namespace: dsbd-ns
+  labels:
+    app: data-collector
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5001
+      name: http
+      targetPort: http
+    - port: 50052
+      name: grpc
+      targetPort: grpc
+  selector:
+    app: data-collector
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-collector
+  namespace: dsbd-ns
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-collector
+  template:
+    metadata:
+      labels:
+        app: data-collector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5001"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: data-collector
+          image: data-collector:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+
+            - name: DATA_DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DATA_DB_HOST
+
+            - name: DATA_DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DATA_DB_PORT
+
+            - name: DATA_DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: MYSQL_DATABASE_DATA
+
+            - name: DATA_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_USER
+
+            - name: DATA_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_PASSWORD
+
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: KAFKA_BOOTSTRAP_SERVERS
+
+            - name: USER_MANAGER_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: USER_MANAGER_HOST
+
+            - name: USER_MANAGER_GRPC_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: USER_MANAGER_GRPC_PORT
+
+            - name: COLLECTION_INTERVAL_HOURS
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: COLLECTION_INTERVAL_HOURS
+
+            - name: DATA_COLLECTOR_GRPC_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DATA_COLLECTOR_GRPC_PORT
+
+            - name: CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: CLIENT_ID
+
+            - name: CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: CLIENT_SECRET
+
+          ports:
+            - containerPort: 5001
+              name: http
+            - containerPort: 50052
+              name: grpc
+
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            #limits:
+              #memory: "256Mi"
+              #cpu: "500m"
+
+
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 80 # Allows up to 800 (about 13 minutes) seconds for startup (waiting for DB)
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3

@@ -5,3 +5,4 @@ pymysql==1.1.0
 cryptography==41.0.7
 grpcio==1.60.0
 grpcio-tools==1.60.0
+prometheus-client
