@@ -359,7 +359,7 @@ Il sistema espone le metriche sulla dashboard di Prometheus.
 
 ---
 
-### Setup e Deploy
+### Setup e Deploy (sezione utile principalmente per Docker Compose)
 
 **1. Clonare il repository**
 
