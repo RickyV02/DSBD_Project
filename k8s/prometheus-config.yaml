@@ -137,7 +137,7 @@ spec:
               port: 9090
             periodSeconds: 10
             timeoutSeconds: 10
-            failureThreshold: 30 # 5 minutes
+            failureThreshold: 60 # 5 minutes is enough for Prometheus to start even with initial database setup, but just to be safe we allow a bit more time
 
           livenessProbe:
             httpGet:

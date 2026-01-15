@@ -104,7 +104,7 @@ spec:
               command: ["kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
             periodSeconds: 10
             timeoutSeconds: 10
-            failureThreshold: 60 # Increased threshold to allow more time for Kafka to start up (can be slow on first start, and it's just to be safe even on low resources)
+            failureThreshold: 120 # Increased threshold to allow more time for Kafka to start up (can be slow on first start, and it's just to be safe even on low resources --- allows up to 20 minutes, but usually takes much less)
 
           livenessProbe:
             exec:

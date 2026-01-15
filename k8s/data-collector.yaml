@@ -140,7 +140,7 @@ spec:
               port: http
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 80 # Allows up to 800 (about 13 minutes) seconds for startup (waiting for DB)
+            failureThreshold: 150 # Allows up to 1500 (about 25 minutes) seconds for startup (waiting for DB + 5 extra minutes)
 
           livenessProbe:
             httpGet:

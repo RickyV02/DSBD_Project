@@ -12,7 +12,7 @@ import uuid
 import json
 import time
 from datetime import datetime, timedelta, timezone
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from grpc_client import DataCollectorClient
 from prometheus_client import make_wsgi_app, Counter, Gauge # make_wsgi_app to expose /metrics endpoint (it's a WSGI app, so like Flask but only for metrics)
 from werkzeug.middleware.dispatcher import DispatcherMiddleware # To combine Flask app with Prometheus WSGI app (we use a middleware to serve both apps on different paths)
@@ -134,7 +134,16 @@ def initialize_metrics(app): # We initialize the metrics at startup, so that we 
 
 with app.app_context():
     wait_for_db(app)
-    db.create_all()
+    try:
+        db.create_all()
+        print("Tabelle del database create correttamente.", flush=True)
+    except OperationalError as e: # EDIT: Catching OperationalError to handle "table already exists" case, useful for concurrent startups with multiple replicas.
+        orig = getattr(e, "orig", None)
+        if orig and getattr(orig, "args", None) and orig.args[0] == 1050: # Error code for "Table already exists"
+            print("Le tabelle del database esistono già. Continuo...", flush=True)
+        else:
+            print(f"Errore durante la creazione delle tabelle: {e}", flush=True)
+            raise
     initialize_metrics(app)
 
 # In order to handle both REST and gRPC servers, we start the gRPC server in a separate thread !
@@ -412,7 +421,7 @@ def delete_user(email):
                 user_to_delete = db.session.merge(user)
                 db.session.delete(user_to_delete)
 
-                # RETRIABLE OPERATION: Attempting to commit local changes.
+                # RETRYABLE OPERATION: Attempting to commit local changes.
                 db.session.commit()
 
                 # Success!
