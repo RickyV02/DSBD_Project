@@ -1,0 +1,132 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: dsbd-ns
+  labels:
+    app: kafka
+spec:
+  ports:
+    - port: 9092
+      name: plaintext
+      targetPort: 9092
+  clusterIP: None  # Headless Service for StatefulSet
+  publishNotReadyAddresses: true # Enable publishing addresses for not ready pods (as required by Kafka Readiness Probes which uses pod IPs)
+  selector:
+    app: kafka
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: dsbd-ns
+spec:
+  serviceName: "kafka"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+        - name: kafka
+          image: confluentinc/cp-kafka:7.4.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KAFKA_NODE_ID
+              value: "1"
+            - name: CLUSTER_ID
+              value: "MkU3OEVBNTcwNTJENDM2Qk"
+            - name: KAFKA_CLUSTER_ID
+              value: "MkU3OEVBNTcwNTJENDM2Qk"
+
+            - name: KAFKA_PROCESS_ROLES
+              value: "broker,controller"
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: "1@kafka-0.kafka.dsbd-ns.svc.cluster.local:29093"
+
+            - name: KAFKA_LISTENERS
+              value: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093"
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://kafka:9092"
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: "PLAINTEXT"
+
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+            - name: KAFKA_NUM_PARTITIONS
+              value: "1"
+
+            - name: KAFKA_LOG4J_ROOT_LOGGER
+              value: "WARN, stdout"
+            - name: KAFKA_LOG4J_LOGGERS
+              value: "kafka=WARN,kafka.controller=WARN,state.change.logger=WARN"
+
+          ports:
+            - containerPort: 9092
+              name: plaintext
+            - containerPort: 29093
+              name: controller
+
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
+
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            #limits:
+              #memory: "1Gi"
+              #cpu: "1000m"
+
+        # Probes to ensure Kafka broker is ready; these require the headless service with publishNotReadyAddresses enabled
+        # because the pod IP is not available until the pod is ready and we need to be able to reach the broker before that.
+        # Another possible approach is to use a TCP socket probe, but that does not guarantee Kafka is fully ready to serve requests.
+        # However, TCP socket is more "CPU friendly" than exec probes (which spawn a new process), so in development environments
+        # with limited resources it may be preferred (exec probes can cause CPU starvation if the node is under heavy load, and maybe k8s could kill the pod and restart it).
+        # Here we use exec probes that run "kafka-topics --list" command to check if the broker is responsive (just for demonstration purposes).
+
+          startupProbe:
+            exec:
+              command: ["kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 120 # Increased threshold to allow more time for Kafka to start up (can be slow on first start, and it's just to be safe even on low resources --- allows up to 20 minutes, but usually takes much less)
+
+          livenessProbe:
+            exec:
+              command: ["kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 15 # Increased threshold to reduce chance of false positives, as Kafka can be slow to respond under load
+
+          readinessProbe:
+            exec:
+              command: ["kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 15
+            failureThreshold: 15
+
+  volumeClaimTemplates:
+    - metadata:
+        name: kafka-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

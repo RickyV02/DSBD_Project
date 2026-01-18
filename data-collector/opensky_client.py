@@ -56,11 +56,14 @@ class OpenSkyClient:
             else:
                 print(f"Errore Autenticazione: {response.status_code} - {response.text}", flush=True)
                 self.token = None
+                raise Exception(f"Login Fallito con status: {response.status_code}")
         except CircuitBreakerOpenException:
             print("CircuitBreaker OPEN: Impossibile effettuare login.", flush=True)
             self.token = None
+            raise
         except Exception as e:
             print(f"Errore connessione Auth: {e}", flush=True)
+            raise e
 
     def _is_token_expired(self):
         return self.token is None or time.time() > self.token_expiry
@@ -73,7 +76,7 @@ class OpenSkyClient:
             with self._auth_lock:
                 # Double Check: Verify again in case another thread refreshed it while we waited
                 if self._is_token_expired():
-                    self._perform_login()
+                    self._perform_login() # If login fails, exception will propagate to caller
                 else:
                     print(f"[Thread {threading.current_thread().name}] Token già rinnovato da un altro thread! Procedo.", flush=True)
 
@@ -99,7 +102,7 @@ class OpenSkyClient:
                     return flights if flights else []
                 except ValueError:
                     print(f"Warning: JSON vuoto/invalido per {airport_icao}", flush=True)
-                    return []
+                    raise Exception(f"JSON risposta non valido per {airport_icao}")
 
             elif response.status_code == 401:
                 # 401 Explicitly means Token Expired or Invalid.
@@ -118,15 +121,15 @@ class OpenSkyClient:
 
             else:
                 print(f"Errore inatteso {response.status_code} per {airport_icao}", flush=True)
-                return []
+                raise Exception(f"Errore API {response.status_code}")
 
         except CircuitBreakerOpenException:
             print(f"CircuitBreaker OPEN: Saltata richiesta per {airport_icao}", flush=True)
-            return []
+            raise
         except Exception as e:
             # Here we handle: 500 errors, 429 Rate Limits, Timeouts, etc.
             print(f"Errore richiesta (Server/Network/RateLimit): {str(e)}", flush=True)
-            return []
+            raise e
 
     def get_arrivals(self, airport_icao, begin_timestamp=None, end_timestamp=None):
         if not begin_timestamp:
@@ -147,7 +150,7 @@ class OpenSkyClient:
                     return flights if flights else []
                 except ValueError:
                     print(f"Warning: JSON vuoto/invalido per {airport_icao}", flush=True)
-                    return []
+                    raise Exception(f"JSON risposta non valido per {airport_icao}")
 
             elif response.status_code == 401:
                 print(f"401 Unauthorized per {airport_icao}. Token scaduto. Forzo aggiornamento...", flush=True)
@@ -155,20 +158,21 @@ class OpenSkyClient:
                 return self.get_arrivals(airport_icao, begin_timestamp, end_timestamp)
 
             elif response.status_code == 404:
+                print(f"Nessun dato trovato per {airport_icao}", flush=True)
                 return []
 
             else:
                 print(f"Errore inatteso {response.status_code} per {airport_icao}", flush=True)
-                return []
+                raise Exception(f"Errore API {response.status_code}")
 
         except CircuitBreakerOpenException:
             print(f"CircuitBreaker OPEN: Saltata richiesta per {airport_icao}", flush=True)
-            return []
+            raise
         except Exception as e:
             print(f"Errore richiesta (Server/Network/RateLimit): {str(e)}", flush=True)
-            return []
+            raise e
 
-    def get_flights_for_airport(self, airport_icao, begin_timestamp=None, end_timestamp=None):
+    def get_flights_for_airport(self, airport_icao, begin_timestamp=None, end_timestamp=None): # We do not use trying/catching here, we let exceptions propagate to the caller
 
         departures = self.get_departures(airport_icao, begin_timestamp, end_timestamp)
 

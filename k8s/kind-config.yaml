@@ -1,0 +1,35 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+        listenAddress: "127.0.0.1"
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+        listenAddress: "127.0.0.1"
+
+  # --- WORKER NODES CONFIGURATION ---
+
+  # We define 2 worker nodes just to simulate a multi-node cluster
+  # (so we have 1 control-plane and 2 workers) and enable Prometheus scraping from multiple nodes.
+  # Probes and WSL have been configured to work properly in such a setup.
+  # Comment/Remove the lines below to work in a single-node cluster, where pods will be placed in the control-plane node (especially useful in environments with low resources).
+
+  - role: worker
+  - role: worker
+
+networking:
+  apiServerAddress: "127.0.0.1"
+  apiServerPort: 6443

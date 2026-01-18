@@ -12,20 +12,139 @@ import uuid
 import json
 import time
 from datetime import datetime, timedelta, timezone
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from grpc_client import DataCollectorClient
+from prometheus_client import make_wsgi_app, Counter, Gauge # make_wsgi_app to expose /metrics endpoint (it's a WSGI app, so like Flask but only for metrics)
+from werkzeug.middleware.dispatcher import DispatcherMiddleware # To combine Flask app with Prometheus WSGI app (we use a middleware to serve both apps on different paths)
 
 app = Flask(__name__)
 CORS(app)
 
+# Environment Variables for Node and Service Identification
+# (to get the real node nome and not the pod name, which can be ephemeral, we'll use K8S_NODE_NAME set by the downward API in the deployment manifest)
+NODE_NAME = os.getenv('K8S_NODE_NAME', 'unknown-node')
+SERVICE_NAME = 'user-manager'
+
+# 1. Counter Metric: These count occurrences of events.
+# Total number of HTTP requests processed, labeled by method, endpoint, status code, service, and node.
+HTTP_REQUESTS_TOTAL = Counter(
+    'http_requests_total',
+    'Total number of HTTP requests processed',
+    ['method', 'endpoint', 'status', 'service', 'node']
+)
+
+# 2. Gauge Metric: These represent values that can go up and down.
+# Total number of registered users in the database, labeled by service and node.
+ACTIVE_USERS_GAUGE = Gauge(
+    'active_users_total',
+    'Total number of registered users in the db (synced every 10 seconds)',
+    ['service', 'node']
+)
+
+# Cache Metrics: Track cache cleanup duration (Gauge) and number of cleaned entries (Counter)
+CACHE_CLEANUP_DURATION = Gauge(
+    'cache_cleanup_duration_seconds',
+    'Time spent cleaning up expired cache entries during the last run',
+    ['service', 'node']
+)
+
+CACHE_CLEANED_ENTRIES = Counter(
+    'cache_cleaned_entries_total',
+    'Total number of expired cache entries removed',
+    ['service', 'node']
+)
+
+# That's it! We don't need to register metrics manually in each endpoint.
+# We'll use a hook to automatically increment the HTTP_REQUESTS_TOTAL counter after each request (since we want to track all endpoints and status codes, not only successful ones).
+# And this middleware will expose the /metrics endpoint for Prometheus to scrape.
+app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {
+    '/metrics': make_wsgi_app()
+})
+
+@app.after_request
+def record_request_data(response): # This function is called after each request to record metrics.
+    # Avoid counting the /metrics endpoint itself to prevent recursion
+    if request.path == '/metrics':
+        return response
+
+    try:
+        HTTP_REQUESTS_TOTAL.labels(
+            method=request.method,
+            endpoint=request.path,
+            status=str(response.status_code),
+            service=SERVICE_NAME,
+            node=NODE_NAME
+        ).inc()
+    except Exception as e:
+        print(f"[Prometheus] Errore aggiornamento metriche: {e}", flush=True)
+
+    return response
+
 # Configs for Database
 app.config['SQLALCHEMY_DATABASE_URI'] = f"mysql+pymysql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False # to suppress warnings (disables signaling feature, avoiding overhead)
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True, # Enable pool pre-ping to avoid stale connections
+    'pool_recycle': 3600, # Recycle connections after 1 hour
+    'pool_size': 10, # Set the pool size
+    'pool_timeout': 30,  #Timeout for getting a connection from the pool
+    'max_overflow': 20 # Allow overflow connections
+}
 
 db.init_app(app)
 
+def wait_for_db(app):
+    print("Verifica connessione al Database...", flush=True)
+    with app.app_context():
+        while True:
+            try:
+                with db.engine.connect() as connection:
+                    print("Database pronto! Connessione stabilita.", flush=True)
+                    return
+            except Exception as e:
+                print(f"Database non pronto ({str(e)}). Riprovo tra 3 secondi...", flush=True)
+                time.sleep(3)
+
+def sync_user_metrics():
+    print("[Metrics Sync] Avvio thread di sincronizzazione utenti...", flush=True)
+    while True:
+        with app.app_context():
+            try:
+                user_count = db.session.query(User).count()
+                ACTIVE_USERS_GAUGE.labels(service=SERVICE_NAME, node=NODE_NAME).set(user_count)
+            except Exception as e:
+                print(f"[Metrics Sync] Errore durante il sync: {e}", flush=True)
+        
+        time.sleep(10)
+
+def initialize_metrics(app): # We initialize the metrics at startup, so that we can see them immediately in Prometheus.
+    print("[Prometheus] Inizializzazione metriche...", flush=True)
+    with app.app_context():
+        try:
+            CACHE_CLEANED_ENTRIES.labels(service=SERVICE_NAME, node=NODE_NAME).inc(0) # Initialize to 0
+            print("[Prometheus] Cache Counter inizializzato a 0.", flush=True)
+        except Exception as e:
+            print(f"[Prometheus] Errore inizializzazione Cache Counter: {e}", flush=True)
+
+        try:
+            CACHE_CLEANUP_DURATION.labels(service=SERVICE_NAME, node=NODE_NAME).set(0)
+            print("[Prometheus] Cache Cleanup Gauge inizializzato a 0.", flush=True)
+        except Exception as e:
+            print(f"[Prometheus] Errore inizializzazione Cache Gauge: {e}", flush=True)
+
 with app.app_context():
-    db.create_all()
+    wait_for_db(app)
+    try:
+        db.create_all()
+        print("Tabelle del database create correttamente.", flush=True)
+    except OperationalError as e: # EDIT: Catching OperationalError to handle "table already exists" case, useful for concurrent startups with multiple replicas.
+        orig = getattr(e, "orig", None)
+        if orig and getattr(orig, "args", None) and orig.args[0] == 1050: # Error code for "Table already exists"
+            print("Le tabelle del database esistono già. Continuo...", flush=True)
+        else:
+            print(f"Errore durante la creazione delle tabelle: {e}", flush=True)
+            raise
+    initialize_metrics(app)
 
 # In order to handle both REST and gRPC servers, we start the gRPC server in a separate thread !
 def start_grpc_server():
@@ -35,6 +154,9 @@ def start_grpc_server():
 grpc_thread = threading.Thread(target=start_grpc_server, daemon=True)
 grpc_thread.start()
 
+metrics_thread = threading.Thread(target=sync_user_metrics, daemon=True)
+metrics_thread.start()
+
 data_collector_client = DataCollectorClient()
 
 # Cache Cleaner Thread
@@ -42,6 +164,8 @@ def clean_request_cache():
     while True:
         with app.app_context():
             try:
+                start_time = time.time()
+
                 # If a request is retried after 5 minutes, it's treated as a new attempt.
                 # Cache entries older than 5 minutes are deleted.
                 expiration_time = datetime.now(timezone.utc) - timedelta(minutes=5)
@@ -50,8 +174,13 @@ def clean_request_cache():
                     db.delete(RequestCache).where(RequestCache.created_at < expiration_time)
                 )
                 db.session.commit()
+
+                duration = time.time() - start_time
+                CACHE_CLEANUP_DURATION.labels(service=SERVICE_NAME, node=NODE_NAME).set(duration)
+
                 if deleted.rowcount > 0:
-                    print(f"[Cache Cleaner] Removed {deleted.rowcount} request cache entries.", flush=True)
+                    print(f"[Cache Cleaner] Rimossi {deleted.rowcount} elementi in {duration:.4f}s.", flush=True)
+                    CACHE_CLEANED_ENTRIES.labels(service=SERVICE_NAME, node=NODE_NAME).inc(deleted.rowcount)
                 else:
                     print(f"[Cache Cleaner] No request cache entries to remove.", flush=True)
             except Exception as e:
@@ -261,36 +390,63 @@ def delete_user(email):
 
         user_dict = user.to_dict()
 
-        try:
-            # We mark the user for deletion in the session, but we do NOT commit yet.
-            db.session.delete(user)
+        # PHASE 1: PIVOT TRANSACTION (gRPC Remote Cleanup)
+        # We verify if the remote cleanup on Data Collector is successful first.
+        # This acts as a "Pre-Commit Check" and our Point of No Return.
+        # Note: We haven't touched the local DB session yet to keep it clean.
 
-            # Before committing the irreversible local deletion, we verify if the remote cleanup
-            # on Data Collector is successful. This acts as a "Pre-Commit Check".
-            # If Data Collector is down or fails, we abort the whole operation to maintain consistency.
-            grpc_success, grpc_msg = data_collector_client.delete_interests(clean_email)
+        grpc_success, grpc_msg = data_collector_client.delete_interests(clean_email) # THIS IS A PIVOT TRANSACTIONAL STEP
 
-            if not grpc_success:
-                # The remote dependency failed. To ensure atomicity (all or nothing),
-                # we rollback the local deletion. The user remains in the DB.
-                db.session.rollback()
-                return jsonify({
-                    "error": "Impossibile completare la cancellazione: Errore di comunicazione con Data Collector.",
-                    "details": grpc_msg
-                }), 503 # Service Unavailable
-
-            # Remote call was successful. We can now safely commit the local change.
-            db.session.commit()
-
-            return jsonify({
-                "message": "Utente eliminato con successo",
-                "user": user_dict,
-                "data_cleanup": "Completed"
-            }), 200
-
-        except Exception as db_err: #If the remote call was successful but local deletion fails, the user remains in DB but with no interests in Data Collector.
+        if not grpc_success:
+            # The remote dependency failed. Since we haven't modified the local DB yet,
+            # we just abort. No rollback needed (session is clean), but we ensure consistency and we do it just for safety.
             db.session.rollback()
-            raise db_err
+            return jsonify({
+                "error": "Impossibile completare la cancellazione: Errore di comunicazione con Data Collector.",
+                "details": grpc_msg
+            }), 503 # Service Unavailable
+
+        # PHASE 2: RETRYABLE TRANSACTION (Local Commit with Hybrid Retry)
+        # Remote call was successful. We can now safely commit the local change.
+        # Since we passed the Pivot, this step MUST succeed eventually.
+        # We implement a Short-Term Retry mechanism here to handle transient DB locks/errors.
+
+        MAX_RETRIES = 3
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                # We mark the user for deletion.
+                # IMPORTANT: We use merge() because if a previous attempt in this loop failed
+                # and rolled back, the 'user' object might be detached from the session.
+                user_to_delete = db.session.merge(user)
+                db.session.delete(user_to_delete)
+
+                # RETRYABLE OPERATION: Attempting to commit local changes.
+                db.session.commit()
+
+                # Success!
+                return jsonify({
+                    "message": "Utente eliminato con successo",
+                    "user": user_dict,
+                    "data_cleanup": "Completed"
+                }), 200
+
+            except Exception as db_err:
+                # If local deletion fails, the user remains in DB but with no interests in Data Collector.
+                # We rollback this specific attempt.
+                db.session.rollback()
+
+                if attempt < MAX_RETRIES - 1:
+                    # Short-Term Retry: Wait a bit and try again (Forward Recovery).
+                    print(f"Commit Locale fallito (tentativo {attempt+1}/{MAX_RETRIES}). Ritento...", flush=True)
+                    time.sleep(0.5)
+                    continue
+                else:
+                    # If we run out of retries, we raise the error.
+                    # This triggers the 500 response, delegating the Long-Term Retry to the client.
+                    # Thanks to Idempotency on Data Collector, the user can safely retry later.
+                    print(f"Errore critico al DB dopo {MAX_RETRIES} tentativi. Delego al client di ritentare la cancellazione.", flush=True)
+                    raise db_err
 
     except Exception as e:
         return jsonify({"error": f"Errore durante l'eliminazione: {str(e)}"}), 500

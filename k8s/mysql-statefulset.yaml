@@ -1,0 +1,212 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-db
+  namespace: dsbd-ns
+  labels:
+    app: user-db
+spec:
+  ports:
+    - port: 3306
+      name: mysql
+  clusterIP: None # Headless Service (we need it for StatefulSet)
+  selector:
+    app: user-db
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: user-db
+  namespace: dsbd-ns
+spec:
+  serviceName: "user-db"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-db
+  template:
+    metadata:
+      labels:
+        app: user-db
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_ROOT_PASSWORD
+
+            - name: MYSQL_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: MYSQL_DATABASE_USER
+
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_USER
+
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_PASSWORD
+
+          ports:
+            - containerPort: 3306
+              name: mysql
+          volumeMounts:
+            - name: user-db-data
+              mountPath: /var/lib/mysql
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            #limits:
+              #memory: "512Mi"
+              #cpu: "500m"
+
+          startupProbe:
+            tcpSocket:
+              port: 3306
+            periodSeconds: 10
+            failureThreshold: 120 # increased to 120 to allow more time for initial setup (allows up to 20 minutes, just to be safe since 10 minutes is the total startup time for the script)
+            timeoutSeconds: 5
+
+          livenessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 5
+
+          readinessProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"] # we could also use a TCP socket here
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: user-db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-db
+  namespace: dsbd-ns
+  labels:
+    app: data-db
+spec:
+  ports:
+    - port: 3306
+      name: mysql
+  clusterIP: None
+  selector:
+    app: data-db
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: data-db
+  namespace: dsbd-ns
+spec:
+  serviceName: "data-db"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-db
+  template:
+    metadata:
+      labels:
+        app: data-db
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_ROOT_PASSWORD
+
+            - name: MYSQL_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: MYSQL_DATABASE_DATA
+
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_USER
+
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_PASSWORD
+
+          ports:
+            - containerPort: 3306
+              name: mysql
+          volumeMounts:
+            - name: data-db-data
+              mountPath: /var/lib/mysql
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            #limits:
+              #memory: "512Mi"
+              #cpu: "500m"
+
+          startupProbe:
+            tcpSocket:
+              port: 3306
+            periodSeconds: 10
+            failureThreshold: 120 # increased to 120 to allow more time for initial setup (allows up to 20 minutes, just to be safe since 10 minutes is the total startup time for the script)
+            timeoutSeconds: 5
+
+          livenessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 5
+
+          readinessProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"] # we could also use a TCP socket here
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: data-db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-system
+  namespace: dsbd-ns
+  labels:
+    app: alert-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alert-system
+  template:
+    metadata:
+      labels:
+        app: alert-system
+    spec:
+      containers:
+        - name: alert-system
+          image: alert-system:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: KAFKA_BOOTSTRAP_SERVERS
+
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            #limits:
+              #memory: "128Mi"
+              #cpu: "200m"
+
+# No need to use probes, since the only dependencies are Kafka and application code handles connections itself.
+# If kafka dies and code crashes, k8s will restart the pod automatically.

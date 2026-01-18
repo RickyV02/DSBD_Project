@@ -25,8 +25,19 @@ class UserManagerClient:
             ]
         }
 
+        # Note: In a high-load production environment with multiple server replicas (in this case, user-manager Pods),
+        # we would implement Client-Side Load Balancing to avoid gRPC sticky connections (HTTP/2 persistence).
+        # This would require:
+        # 1. Using the 'dns:///' scheme in the target (e.g., f'dns:///{self.host}:{self.port}') to resolve all Pods IPs (thanks to Kubernetes DNS, but also works on Docker Compose).
+        # 2. Adding ('grpc.lb_policy_name', 'round_robin') to the channel options (so that the client can balance requests across multiple server instances, since it creates N persistent connections).
+        # For the current scope, relying on the Kubernetes Service (L4 balancing) is sufficient (this applies only at the establishment of the connection), but we report it just for completeness.
+
         options = [
-            ('grpc.service_config', json.dumps(service_config))
+            ('grpc.service_config', json.dumps(service_config)),
+            ('grpc.keepalive_time_ms', 10000),
+            ('grpc.keepalive_timeout_ms', 5000),
+            ('grpc.keepalive_permit_without_calls', 1),
+            ('grpc.http2.max_pings_without_data', 0),
         ]
 
         target = f'{self.host}:{self.port}'

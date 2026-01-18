@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'flight-monitor'
+    static_configs:
+      - targets:
+        - 'user-manager:5000'
+        - 'data-collector:5001'
+        - 'alert-notifier-system:8000'

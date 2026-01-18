@@ -1,134 +1,11 @@
 {
 	"info": {
-		"_postman_id": "dsbd-hw2-merged-final",
-		"name": "DSBD Homework 2 - Complete Test Suite",
-		"description": "Suite di test completa per l'Homework 2.\nInclude tutti i test dell'HW1 adattati per Nginx + i nuovi test per Kafka e per le soglie.\n\n**Copertura:**\n1. **Infrastructure**: Nginx Routing, SSL, Healthchecks.\n2. **User Manager**: CRUD completo, Idempotenza, Validazione Input, IP Hashing.\n3. **Data Collector**: Gestione Interessi con Soglie (HW2), Validazione ICAO.\n4. **Data Operations**: Trigger Collezione Voli, Kafka, Statistiche Voli.\n\n**IMPORTANTE**: - Disabilitare 'SSL Verification' nei Settings di Postman.\n- Per essere certi di ricevere una mail, inserirne una reale in `test_email`.\n - Dato che aggiungere un interesse triggera automaticamente la collezione dei voli (qualora nessun utente abbia già espresso un interesse per un aeroporto con lo stesso ICAO) eseguendo la collection in modalità RUN, lo scheduler di raccolta periodica (avviato dalla route di Trigger) non eseguirà la collezione voli perché c'è già un'altro thread (quello avviato per quanto detto poc'anzi) che se ne sta occupando\n-Per quanto detto al punto precedente, se viene avviata la raccolta a seguito dell'aggiunta di un interesse tramite l'utilizzo della chiamata 2.1, NON verrà generata la mail, perchè (giustamente) quell'utente non aveva inserito high e low value (il test 2.1 è l'inserimento di un interesse 'Standard'), dunque si consiglia di testarlo avviando MANUALMENTE le chiamate 2.3 (che inserisce un interesse CON high e low value) e poi, se l'interessa non c'era, aspettare la fine della raccolta avviata in automatico; viceversa, se era presenta e lo abbiamo aggiornato, avviarla manualmente grazie alla chiamata 3.1",
+		"_postman_id": "dsbd-hw3",
+		"name": "DSBD Homework 3 - Complete Test Suite",
+		"description": "Suite di test completa per l'Homework 3.\nInclude tutti i test dell'HW2 adattati per l'integrazione di K8s e Prometheus\n\n**Copertura:**\n**User Manager**: CRUD completo, Idempotenza, Validazione Input, IP Hashing.\n**Data Collector**: Gestione Interessi con Soglie (HW2), Validazione ICAO.\n**Data Operations**: Trigger Collezione Voli, Kafka, Statistiche Voli.\n\n**IMPORTANTE**: - Disabilitare 'SSL Verification' nei Settings di Postman.\n- Per essere certi di ricevere una mail, inserirne una reale in `test_email`.\n - Dato che aggiungere un interesse triggera automaticamente la collezione dei voli (qualora nessun utente abbia già espresso un interesse per un aeroporto con lo stesso ICAO) eseguendo la collection in modalità RUN, lo scheduler di raccolta periodica (avviato dalla route di Trigger) non eseguirà la collezione voli perché c'è già un'altro thread (quello avviato per quanto detto poc'anzi) che se ne sta occupando\n-Per quanto detto al punto precedente, se viene avviata la raccolta a seguito dell'aggiunta di un interesse tramite l'utilizzo della chiamata 2.1, NON verrà generata la mail, perchè (giustamente) quell'utente non aveva inserito high e low value (il test 2.1 è l'inserimento di un interesse 'Standard'), dunque si consiglia di testarlo avviando MANUALMENTE le chiamate 2.3 (che inserisce un interesse CON high e low value) e poi, se l'interessa non c'era, aspettare la fine della raccolta avviata in automatico; viceversa, se era presente e lo abbiamo aggiornato, avviarla manualmente grazie alla chiamata 3.1",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
-		{
-			"name": "0. Infrastructure & Health",
-			"item": [
-				{
-					"name": "0.1 Gateway Health (HTTP Redirect Check)",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "http://localhost/health",
-							"protocol": "http",
-							"host": [
-								"localhost"
-							],
-							"path": [
-								"health"
-							]
-						},
-						"description": "Verifica che Nginx risponda sulla porta 80 e faccia redirect o gestisca la richiesta."
-					},
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Gateway Responds (200/301)\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 301, 302]); });"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "0.2 User Manager Service Health",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "{{base_url}}/health/users",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"health",
-								"users"
-							]
-						},
-						"description": "Verifica routing Nginx -> User Manager"
-					},
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
-									"pm.test(\"Service is User Manager\", function () { var j = pm.response.json(); pm.expect(j.service).to.eql(\"user-manager\"); });"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "0.3 Data Collector Service Health",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "{{base_url}}/health/data",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"health",
-								"data"
-							]
-						},
-						"description": "Verifica routing Nginx -> Data Collector"
-					},
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
-									"pm.test(\"Service is Data Collector\", function () { var j = pm.response.json(); pm.expect(j.service).to.eql(\"data-collector\"); });"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				},
-				{
-					"name": "0.4 Scheduler Status",
-					"request": {
-						"method": "GET",
-						"header": [],
-						"url": {
-							"raw": "{{base_url}}/scheduler/status",
-							"host": [
-								"{{base_url}}"
-							],
-							"path": [
-								"scheduler",
-								"status"
-							]
-						}
-					},
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
-									"pm.test(\"Scheduler Active\", function () { var j = pm.response.json(); pm.expect(j.active).to.eql(true); });"
-								],
-								"type": "text/javascript"
-							}
-						}
-					]
-				}
-			]
-		},
 		{
 			"name": "1. User Manager Logic",
 			"item": [
@@ -674,7 +551,7 @@
 								"exec": [
 									"pm.test(\"Job Started (200)\", function () { pm.response.to.have.status(200); });",
 									"// Wait for OpenSky processing (Client side wait)",
-									"setTimeout(function(){}, 3000);"
+									"setTimeout(function(){}, 10000);"
 								],
 								"type": "text/javascript"
 							}

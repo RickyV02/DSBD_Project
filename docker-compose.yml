@@ -15,10 +15,11 @@ services:
         networks:
             - user-net
         healthcheck:
-            test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+            test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
             interval: 10s
             timeout: 5s
             retries: 5
+            start_period: 60s
         restart: unless-stopped
 
     # Database for Data Collector
@@ -37,10 +38,11 @@ services:
         networks:
             - data-net
         healthcheck:
-            test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+            test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
             interval: 10s
             timeout: 5s
             retries: 5
+            start_period: 60s
         restart: unless-stopped
 
     # User Manager Microservice
@@ -71,6 +73,12 @@ services:
         networks:
             - user-net
             - shared-net
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 30s
         restart: unless-stopped
 
     # Data Collector Microservice
@@ -103,13 +111,19 @@ services:
             data-db:
                 condition: service_healthy
             user-manager:
-                condition: service_started
+                condition: service_healthy
             kafka:
                 condition: service_healthy
         networks:
             - data-net
             - kafka-net
             - shared-net
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 30s
         restart: unless-stopped
 
     # Kafka
@@ -143,10 +157,11 @@ services:
         networks:
             - kafka-net
         healthcheck:
-            test: nc -z localhost 9092 || exit 1
+            test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
             interval: 10s
-            timeout: 5s
+            timeout: 10s
             retries: 5
+            start_period: 60s
         restart: unless-stopped
 
     # Alert System (Both Kafka Consumer and Producer)
@@ -196,11 +211,46 @@ services:
             - ./nginx/ssl:/etc/nginx/ssl:ro # That's where SSL certificates are stored
         depends_on:
             user-manager:
-                condition: service_started
+                condition: service_healthy
             data-collector:
-                condition: service_started
+                condition: service_healthy
         networks:
             - shared-net
+        healthcheck:
+            test: ["CMD", "curl", "-f", "-k", "https://localhost/health"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 20s
+        restart: unless-stopped
+
+    prometheus:
+        image: prom/prometheus:latest
+        container_name: prometheus
+        expose:
+            - "9090"
+        volumes:
+            - ./prometheus.yml:/etc/prometheus/prometheus.yml
+            - prometheus-data:/prometheus
+        command:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--web.external-url=/prometheus'
+            - '--web.enable-lifecycle'
+        depends_on:
+            user-manager:
+                condition: service_healthy
+            data-collector:
+                condition: service_healthy
+        networks:
+            - shared-net
+            - kafka-net
+        healthcheck:
+            test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/prometheus/-/healthy"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 15s
         restart: unless-stopped
 
 networks:
@@ -217,3 +267,4 @@ volumes:
     user-db-data:
     data-db-data:
     kafka-data:
+    prometheus-data:

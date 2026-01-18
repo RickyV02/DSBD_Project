@@ -62,7 +62,14 @@ class UserServiceServicer(user_service_pb2_grpc.UserServiceServicer):
                 db.session.remove()
 
 def serve(app):
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server_options = [
+        ('grpc.keepalive_time_ms', 10000),
+        ('grpc.keepalive_timeout_ms', 5000),
+        ('grpc.http2.min_ping_interval_without_data_ms', 5000),
+        ('grpc.http2.max_pings_without_data', 0),
+        ('grpc.keepalive_permit_without_calls', 1),
+    ]
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10), options=server_options)
     user_service_pb2_grpc.add_UserServiceServicer_to_server(
         UserServiceServicer(app), server
     )

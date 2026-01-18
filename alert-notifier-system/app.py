@@ -6,6 +6,22 @@ import smtplib
 import ssl
 from email.message import EmailMessage
 import signal
+from prometheus_client import start_http_server, Counter, Gauge
+
+NODE_NAME = os.getenv('K8S_NODE_NAME', 'unknown-node')
+SERVICE_NAME = 'alert-notifier-system'
+
+EMAILS_SENT_TOTAL = Counter(
+    'emails_sent_total',
+    'Total number of alert emails sent',
+    ['service', 'node', 'status']
+)
+
+LAST_EMAIL_DURATION = Gauge(
+    'last_email_sent_duration_seconds',
+    'Time spent sending the last alert email in seconds',
+    ['service', 'node']
+)
 
 SMTP_SERVER = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
 SMTP_PORT = int(os.getenv('SMTP_PORT', 465))
@@ -15,6 +31,8 @@ SENDER_EMAIL = os.getenv('SENDER_EMAIL', 'your_alert_sender@example.com')
 
 
 def send_email(recipient_email, subject, body):
+    start_time = time.time()
+
     context = ssl.create_default_context()
 
     msg = EmailMessage()
@@ -27,11 +45,35 @@ def send_email(recipient_email, subject, body):
         server.login(SMTP_USER, SMTP_PASSWORD)
         server.send_message(msg)
 
+    duration = time.time() - start_time
+
+    LAST_EMAIL_DURATION.labels(
+        service=SERVICE_NAME,
+        node=NODE_NAME
+    ).set(duration)
+
     print(f"EMAIL INVIATA con successo a: {recipient_email}")
     return True
 
+def initialize_metrics():
+    print("[Prometheus] Inizializzazione metriche a 0...", flush=True)
+    try:
+        EMAILS_SENT_TOTAL.labels(service=SERVICE_NAME, node=NODE_NAME, status='success').inc(0)
+        EMAILS_SENT_TOTAL.labels(service=SERVICE_NAME, node=NODE_NAME, status='failure').inc(0)
+
+        LAST_EMAIL_DURATION.labels(service=SERVICE_NAME, node=NODE_NAME).set(0)
+
+        print("[Prometheus] Metriche inizializzate.", flush=True)
+    except Exception as e:
+        print(f"[Prometheus] Errore inizializzazione metriche: {e}", flush=True)
+
 def main():
+
+    start_http_server(8000)
+
     print("Avvio Alert Notifier System...", flush=True)
+
+    initialize_metrics()
 
     def handle_sigterm(*args):
         raise KeyboardInterrupt
@@ -86,12 +128,28 @@ def main():
                 print(f"Tentativo di invio email alert a {email}...", flush=True)
                 send_email(email, subject, body)
 
+                EMAILS_SENT_TOTAL.labels(
+                    service=SERVICE_NAME,
+                    node=NODE_NAME,
+                    status='success'
+                ).inc()
+
                 consumer.commit()
                 print(f"Offset {message.offset} committato dopo invio email.", flush=True)
 
             except smtplib.SMTPException as e:
+                EMAILS_SENT_TOTAL.labels(
+                    service=SERVICE_NAME,
+                    node=NODE_NAME,
+                    status='failure'
+                ).inc()
                 print(f"ERRORE SISTEMA (SMTP): Invio email fallito. ({e}). Non committo l'offset.", flush=True)
             except Exception as e:
+                EMAILS_SENT_TOTAL.labels(
+                    service=SERVICE_NAME,
+                    node=NODE_NAME,
+                    status='failure'
+                ).inc()
                 print(f"ERRORE GENERALE: {e}. Non committo l'offset.", flush=True)
 
 

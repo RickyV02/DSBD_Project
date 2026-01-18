@@ -37,7 +37,14 @@ class DataCollectorServicer(data_collector_service_pb2_grpc.DataCollectorService
                 )
 
 def serve(app):
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server_options = [
+        ('grpc.keepalive_time_ms', 10000),
+        ('grpc.keepalive_timeout_ms', 5000),
+        ('grpc.http2.min_ping_interval_without_data_ms', 5000),
+        ('grpc.http2.max_pings_without_data', 0),
+        ('grpc.keepalive_permit_without_calls', 1),
+    ]
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10), options=server_options)
 
     data_collector_service_pb2_grpc.add_DataCollectorServiceServicer_to_server(
         DataCollectorServicer(app), server

@@ -1,148 +1,378 @@
-# Distributed Systems and Big Data (DSBD) Project (Homework 2 Version)
+# Distributed Systems and Big Data (DSBD) Project (Homework 3 Version)
 
 ---
 
 ## Descrizione del Progetto
 
-Questo repository ospita l'evoluzione di un sistema distribuito a microservizi per il monitoraggio del traffico aereo. Rispetto alla versione precedente (disponibile nel branch `homework-1`), l'architettura è stata estesa per supportare l'utilizzo di: Broker Kafka per l'invio di messaggi verso gli utenti registrati, API Gateway tramite Nginx e il pattern Circuit Breaker per proteggere le chiamate verso OpenSky Network. Per eventuali chiarimenti, controllare il branch `homework-1`.
+Questo repository ospita l'ulteriore evoluzione di un sistema distribuito a microservizi per il monitoraggio del traffico aereo, estendendo le funzionalità sviluppate nei precedenti Homework (disponibili nei branch `homework-1` e `homework-2`).
+L'obiettivo principale di questa iterazione è l'introduzione di un meccanismo di **White-box Monitoring** basato su **Prometheus** e il deployment dell'intera infrastruttura su piattaforma **Kubernetes** (utilizzando Kind per l'ambiente locale).
 
-Il sistema permette ora non solo di raccogliere dati da OpenSky Network, ma di monitorare soglie personalizzate di traffico aereo (`high_value`, `low_value`) e inviare notifiche via email in tempo reale grazie a una pipeline di elaborazione basata su eventi.
+Ogni microservizio soggetto a monitoraggio espone metriche specifiche (Counter e Gauge) arricchite con label che identificano il servizio e il nodo Kubernetes ospitante, permettendo un'analisi dettagliata delle performance e dello stato del sistema.
 
 ---
 
 ## Architettura del Sistema
 
-Il sistema è composto da 8 container Docker orchestrati tramite 4 reti distinte, garantendo il massimo livello di isolamento e sicurezza.
+L'architettura è stata adattata per l'orchestrazione via Kubernetes, introducendo concetti come Namespace, Deployment, Ingress, StatefulSet e Services. Di seguito sono presentate la vista logica dei componenti e la vista di deployment su Kubernetes.
+
+### Vista Logica
+
+Il sistema integra ora il server Prometheus che effettua lo scraping periodico delle metriche esposte dai servizi.
 
 ```mermaid
 flowchart TD
+    %% Entità Esterne
     Client[Client / Postman]
     OpenSky[OpenSky Network API]
     Gmail[Gmail SMTP Server]
 
-    subgraph DockerHost [Docker Environment]
+    subgraph System [ ]
         direction TB
-        
+
         %% Entry Point
-        Nginx[<b>NGINX Gateway</b><br>:443]
+        Ingress[<b>Ingress Gateway</b><br>NGINX]
 
-        %% Core Services
-        subgraph Services [Micro Services Layer]
-            UM[<b>User Manager</b><br>REST :5000 / gRPC :50051]
-            DC[<b>Data Collector</b><br>REST :5001 / gRPC :50052]
+        %% Servizi Core
+        subgraph Services [Application Layer]
+            UM[<b>User Manager</b>]
+            DC[<b>Data Collector</b>]
         end
 
-        %% Databases
-        subgraph Persistence [Persistence Layer]
-            UDB[(User DB)]
-            DDB[(Data DB)]
-        end
-
-        %% Event Bus
-        subgraph EventBus [Kafka Layer]
-            Kafka{<b>Kafka Broker</b><br>:9092}
+        %% Elaborazione Asincrona
+        subgraph Async [Kafka Layer]
+            Kafka{<b>Kafka Broker</b><br>}
             AS[<b>Alert System</b><br>Consumer&Producer]
             ANS[<b>Alert Notifier System</b><br>Consumer]
         end
+
+        %% Persistenza
+        subgraph Data [Persistence Layer]
+            UDB[(User DB<br>MySQL)]
+            DDB[(Data DB<br>MySQL)]
+        end
+
+        %% Monitoraggio
+        Prom(<b>Prometheus</b><br>Metrics Server)
     end
 
-    %% Network Flow
-    Client -->|HTTPS| Nginx
-    Nginx -->|shared-net| UM
-    Nginx -->|shared-net| DC
-    
-    UM -->|user-net| UDB
-    DC -->|data-net| DDB
-    
-    UM <-->|gRPC via shared-net| DC
-    
+    %% Relazioni Esterne
+    Client -->|HTTPS :443| Ingress
     DC -->|REST API| OpenSky
-    
-    %% Async Flow
-    DC -.->|kafka-net| Kafka
-    Kafka -.->|Dati dei voli| AS
-    AS -.->|"Producer (Controllo soglie)"| Kafka
-    Kafka -.->|Invio risultati check soglie| ANS
-    ANS -->|Email generate| Gmail
+    ANS -->|Email Generate SMTP| Gmail
 
-    style Client fill:#ff9f43,stroke:#e67e22,color:#fff
-    style OpenSky fill:#1dd1a1,stroke:#10ac84,color:#fff
-    style UM fill:#54a0ff,stroke:#2e86de,color:#fff
-    style DC fill:#54a0ff,stroke:#2e86de,color:#fff
-    style UDB fill:#ff6b6b,stroke:#ee5253,color:#fff
-    style DDB fill:#ff6b6b,stroke:#ee5253,color:#fff
-    style Nginx fill:#2d3436,stroke:#fff,color:#fff
-    style Kafka fill:#000,stroke:#f1c40f,color:#fff
-    style AS fill:#e17055,stroke:#fff,color:#fff
-    style ANS fill:#e17055,stroke:#fff,color:#fff
+    %% Routing Interno
+    Ingress -->|/users| UM
+    Ingress -->|/flights, /interests| DC
+    Ingress --> |/prometheus| Prom
+
+    %% Comunicazione Sincrona (gRPC)
+    UM <-->|gRPC| DC
+
+    %% Persistenza
+    UM -->|TCP :3306| UDB
+    DC -->|TCP :3306| DDB
+
+    %% Comunicazione Asincrona (Kafka)
+    DC -.->|Produce: flight-data| Kafka
+    Kafka -.->|Consume: flight-data| AS
+    AS -.->|Produce: alert-events| Kafka
+    Kafka -.->|Consume: alert-events| ANS
+
+    %% Monitoraggio
+    Prom -.->|Scrape /metrics| UM
+    Prom -.->|Scrape /metrics| DC
+    Prom -.->|Scrape /metrics| ANS
+
+    %% Stili
+    classDef external fill:#f39c12,stroke:#d35400,color:#fff;
+    classDef ingress fill:#2c3e50,stroke:#34495e,color:#fff;
+    classDef service fill:#3498db,stroke:#2980b9,color:#fff;
+    classDef async fill:#e67e22,stroke:#d35400,color:#fff;
+    classDef kafka fill:#000,stroke:#f1c40f,color:#fff;
+    classDef db fill:#e74c3c,stroke:#c0392b,color:#fff;
+    classDef monitor fill:#8e44ad,stroke:#9b59b6,color:#fff;
+
+    class Client,OpenSky,Gmail external;
+    class Ingress ingress;
+    class UM,DC service;
+    class AS,ANS async;
+    class Kafka kafka;
+    class UDB,DDB db;
+    class Prom monitor;
 ```
 
-### Topologia di Rete
+### Vista di Deployment (Kubernetes)
 
-- **shared-net**: Rete di comunicazione per gRPC (tra microservizi) e HTTPS (da Nginx ai microservizi).
-- **kafka-net**: Rete dedicata al messaging di Kafka.
-- **user-net / data-net**: Reti private per l'isolamento dei Database.
+Il deployment sfrutta un cluster **Kind** locale, simulando un ambiente di produzione con **Namespace** dedicato, **StatefulSet** per i database e **Ingress** per l'accesso esterno.
+
+```mermaid
+graph TD
+    %% Cluster Boundary
+    subgraph Cluster ["Kubernetes Cluster (Kind)"]
+        style Cluster fill:#f5f6fa,stroke:#bdc3c7,color:#000
+
+        %% Namespace Boundary
+        subgraph NS [Namespace: dsbd-ns]
+            style NS fill:#fff,stroke:#7f8c8d,color:#000
+
+            %% Ingress Controller
+            IC[<b>Nginx Ingress Controller</b><br>Host Port Mapping: 443]
+
+            %% ---------------- APP SERVICES & WORKLOADS ----------------
+            subgraph Apps [Application Layer]
+                %% User Manager
+                svcUM(Service: <b>user-manager</b><br>ClusterIP :5000 / :50051)
+                podUM[Deployment: <b>user-manager</b><br>Replicas: 2]
+
+                %% Data Collector
+                svcDC(Service: <b>data-collector</b><br>ClusterIP :5001 / :50052)
+                podDC[Deployment: <b>data-collector</b><br>Replicas: 1]
+
+                %% Alert Components (No Services, just Deployments)
+                podAS[Deployment: <b>alert-system</b><br>Replicas: 1]
+                podANS[Deployment: <b>alert-notifier</b><br>Replicas: 1]
+            end
+
+            %% ---------------- INFRA & STORAGE ----------------
+            subgraph Persistence [Stateful Layer]
+                %% Kafka
+                svcKafka(Service: <b>kafka</b><br>Headless :9092)
+                ssKafka[StatefulSet: <b>kafka</b>]
+
+                %% User DB
+                svcUDB(Service: <b>user-db</b><br>Headless :3306)
+                ssUDB[StatefulSet: <b>user-db</b>]
+
+                %% Data DB
+                svcDDB(Service: <b>data-db</b><br>Headless :3306)
+                ssDDB[StatefulSet: <b>data-db</b>]
+            end
+
+            %% ---------------- MONITORING ----------------
+            subgraph Monitor [Monitoring Layer]
+                svcProm(Service: <b>prometheus</b><br>ClusterIP :9090)
+                podProm[Deployment: <b>prometheus</b>]
+            end
+        end
+    end
+
+    %% ================= CONNECTIONS =================
+
+    %% 1. External Access (Ingress)
+    User((Client / Postman)) -->|https://localhost| IC
+    IC -->|"/users"<br>HTTP :5000| svcUM
+    IC -->|"/flights, /interests"<br>HTTP :5001| svcDC
+    IC -->|"/prometheus"<br>HTTP :9090| svcProm
+
+    %% 2. Service to Pod Binding (Selectors)
+    svcUM --- podUM
+    svcDC --- podDC
+    svcKafka --- ssKafka
+    svcUDB --- ssUDB
+    svcDDB --- ssDDB
+    svcProm --- podProm
+
+    %% 3. Internal Application Comm (gRPC & HTTP)
+    podUM -.->|gRPC :50052| svcDC
+    podDC -.->|gRPC :50051| svcUM
+
+    %% 4. Database Connections
+    podUM -->|TCP :3306| svcUDB
+    podDC -->|TCP :3306| svcDDB
+
+    %% 5. Kafka Interactions (Producers/Consumers)
+    podDC -.->|Produce<br>TCP :9092| svcKafka
+    podAS -.->|Consume/Produce<br>TCP :9092| svcKafka
+    podANS -.->|Consume<br>TCP :9092| svcKafka
+
+    %% 6. Monitoring (Scraping)
+    podProm -.->|Scrape :5000| podUM
+    podProm -.->|Scrape :5001| podDC
+    podProm -.->|Scrape :8000| podANS
+
+    %% ================= STYLING =================
+    classDef k8s fill:#34495e,stroke:#2c3e50,color:#fff;
+    classDef pod fill:#3498db,stroke:#2980b9,color:#fff;
+    classDef db fill:#e74c3c,stroke:#c0392b,color:#fff;
+    classDef infra fill:#f39c12,stroke:#d35400,color:#fff;
+
+    class IC,svcUM,svcDC,svcProm,svcKafka,svcUDB,svcDDB k8s;
+    class podUM,podDC,podAS,podANS,podProm pod;
+    class ssUDB,ssDDB db;
+    class ssKafka infra;
+```
 
 ---
 
-## Nuove Caratteristiche Tecniche (HW2)
+## Configurazione e Sicurezza
 
-### 1. API Gateway & Sicurezza (Nginx)
+Prima di procedere con il deploy del sistema, è **necessario** creare manualmente un file `secrets.yaml` nella cartella `k8s/`. Questo file non è incluso nel repository per motivi di sicurezza.
 
-Tutto il traffico in ingresso è ora gestito da **Nginx**, configurato come Reverse Proxy.
+### Template `k8s/secrets.yaml`
 
-- **Utilizzo SSL**: Gestisce certificati (self-signed) e crittografia, liberando i microservizi da questo onere e garantendo connessioni cifrate e sicure.
-- **Isolamento**: I backend non espongono più porte dirette all'host, ma sono raggiungibili solo attraverso il gateway.
+Creare il file utilizzando il seguente template e sostituire i valori con le proprie stringhe codificate in **Base64**:
 
-### 2. Messaging (Kafka)
-L'introduzione di **Apache Kafka** ha introdotto il seguente schema di messaging:
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+  namespace: dsbd-ns
+type: Opaque
+data:
+  # Credenziali Database (Base64)
+  MYSQL_ROOT_PASSWORD: "..."
+  MYSQL_USER: "..."
+  MYSQL_PASSWORD: "..."
 
-- **Data Collector (Producer)**: Pubblica i dati aggiornati sul topic `to-alert-system`.
-- **Alert System (Producer&Consumer)**: Analizza i dati rispetto alle soglie utente (`high/low value`) e genera eventi di notifica sul topic `to-notifier`.
-- **Alert Notifier (Consumer)**: Gestisce l'invio fisico delle email tramite server SMTP.
+  # Credenziali OpenSky (Base64)
+  CLIENT_ID: "..."
+  CLIENT_SECRET: "..."
 
-### 3. Pattern Circuit Breaker
+  # Sicurezza Applicativa (Base64)
+  ENCRYPTION_KEY: "..."
 
-Le chiamate verso l'API esterna OpenSky sono protette da un *Circuit Breaker*.
+  # Server SMTP Email (Base64)
+  SMTP_USER: "..."
+  SMTP_PASSWORD: "..."
+```
 
-- Se OpenSky è irraggiungibile o lento, il circuito si apre per evitare di bloccare i thread dello scheduler.
-- Il sistema va in Graceful Degradation, saltando temporaneamente gli aggiornamenti senza crashare.
+---
+
+## Istruzioni per l'Avvio
+
+Il progetto include script di automazione per semplificare il ciclo di vita del cluster Kind e dell'applicazione.
+
+### Prerequisiti
+
+- Docker Desktop
+- Kind
+- Kubectl
+
+### Setup e Avvio (Script Automatico)
+
+Prima di eseguire gli script per la prima volta, è necessario assegnare i permessi di esecuzione a tutti i file `.sh` presenti nella root tramite il comando:
+```bash
+chmod +x *.sh
+```
+
+Successivamente, per creare il cluster, costruire e caricare su kind le immagini Docker ed applicare i manifest, è sufficiente eseguire lo script `start.sh`:
+```bash
+./start.sh
+```
+
+### Script Helper
+
+- `./stop.sh`: Mette in pausa i nodi del cluster (equivalente a `docker stop`), preservando lo stato dei dati.
+- `./restart.sh`: Riavvia i nodi precedentemente arrestati.
+- `./clear.sh`: **Elimina** definitivamente il cluster e tutti i dati associati.
+
+### ⚠️ Note sulle Performance e Risorse
+
+L'ambiente Kubernetes locale (Kind) su Docker/WSL può richiedere tempi di avvio rilevanti.
+Si precisa che il tempo di **avvio** riportato di seguito include: sia i minuti necessari all'esecuzione dello script `start.sh` (~2-3 minuti), sia i minuti effettivi impiegati dai Pod per avviarsi.
+
+| Operazione                   | Tempo Stimato     | Nota                                                                                                                                                                                                          |
+| ---------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Primo Avvio (Cold Start)** | **~12-15 minuti** | Il tempo è dovuto principalmente alla creazione dei nodi del cluster e dei volumi persistenti MySQL, nonché all'overhead di I/O su filesystem virtualizzati e alle risorse/carico di lavoro del sistema Host. |
+| **Riavvio (Restart)**        | **~2-3 minuti**   | I riavvii successivi sono molto più rapidi in quanto i volumi sono già inizializzati.                                                                                                                         |
+
+> **Nota di Configurazione**: Nei manifest Kubernetes, le sezioni `limits` (CPU/Memory limits) sono state predisposte ma **commentate**. Questa è una scelta progettuale per garantire che i Pod non vengano terminati o rallentati eccessivamente in ambienti di sviluppo con risorse limitate (es. laptop standard con 2 Worker Nodes), dove i picchi di CPU all'avvio sono frequenti. Anche le **Probe** (Liveness/Readiness) sono state configurate con soglie molto elevate e tolleranti per evitare crash loop durante le fasi di inizializzazione lenta. Si lasciano indicate, invece, all'interno dei manifest, le `requests` (risorse minime garantite). Chiaramente in fase di staging/prod, tali valori vanno non solo configurati, ma anche adattati in maniera opportuna.
+
+---
+
+## White-box Monitoring (Prometheus Metrics)
+
+Di seguito sono riportate le metriche custom esposte dai microservizi tramite l' endpoint `/metrics`. Le metriche includono label per identificare il nodo fisico Kubernetes di esecuzione (non il pod effimero, anche se quest'ultimo verrà anch'esso inserito da Prometheus per completezza) e il servizio che le ha prodotte.
+
+### 1. User Manager Service
+
+- **`http_requests_total`** (Counter)
+  - _Descrizione_: Conteggio totale delle richieste HTTP ricevute.
+  - _Labels_: `method`, `endpoint`, `status`, `service`, `node`.
+- **`active_users_total`** (Gauge)
+  - _Descrizione_: Numero totale di utenti attualmente registrati nel sistema. Aggiornato periodicamente (10s) tramite query al DB da un thread dedicato, in modo tale da restare consistente anche in fase di replicazione del microservizio.
+  - _Labels_: `service`, `node`.
+- **`cache_cleanup_duration_seconds`** (Gauge)
+  - _Descrizione_: Tempo impiegato per la pulizia della cache delle richieste idempotenti "scadute".
+  - _Labels_: `service`, `node`.
+- **`cache_cleaned_entries_total`** (Counter)
+  - _Descrizione_: Numero totale di elementi rimossi dalla cache.
+  - _Labels_: `service`, `node`.
+
+### 2. Data Collector Service
+
+- **`opensky_api_calls_total`** (Counter)
+  - _Descrizione_: Numero totale di chiamate verso l'API di OpenSky Network.
+  - _Labels_: `service`, `node`, `status` (attempt, success, failure).
+- **`http_requests_total`** (Counter)
+  - _Descrizione_: Conteggio totale delle richieste HTTP ricevute.
+  - _Labels_: `method`, `endpoint`, `status`, `service`, `node`.
+- **`flight_data_processing_seconds`** (Gauge)
+  - _Descrizione_: Tempo impiegato per recuperare ed elaborare i dati dei voli (fetch + salvataggio DB + invio messaggi Kafka) durante l'ultimo ciclo di raccolta.
+  - _Labels_: `service`, `node`.
+
+### 3. Alert Notifier System
+
+- **`emails_sent_total`** (Counter)
+  - _Descrizione_: Totale email di alert inviate.
+  - _Labels_: `service`, `node`, `status` (success/failure).
+- **`last_email_sent_duration_seconds`** (Gauge)
+  - _Descrizione_: Tempo impiegato per l'invio dell'ultima email tramite server SMTP.
+  - _Labels_: `service`, `node`.
 
 ---
 
 ## API Reference
 
-L'accesso avviene ora esclusivamente tramite **HTTPS sulla porta 443** (localhost).
+L'accesso a tutti i servizi avviene tramite **Ingress Controller (Nginx)** esposto in **HTTPS** sulla porta **443** (`localhost`).
+Il certificato è auto-firmato, quindi potrebbe essere necessario ignorare gli avvisi di sicurezza del browser o usare `-k` con curl.
+**NOTA**: Gli endpoint `/health` dei microservizi, precedentemente raggiungibili tramite endpoint pubblici (`/health/users`,`/health/data`), ora non sono più esposti all'esterno del cluster tramite Ingress per motivi di sicurezza, ma sono sempre attivi sui Pod per le Probe di Kubernetes. Ovviamente restano raggiungibili dall'esterno se si vuole eseguire il sistema tramite Docker Compose.
+Di seguito l'elenco degli endpoint raggiungibili del sistema, divisi per servizio.
 
 ### User Manager
 
-| Metodo | Endpoint                | Descrizione                                                                 |
-| ------ | ----------------------- | --------------------------------------------------------------------------- |
-| GET    | `/health`               | Health check del servizio.                                                  |
-| POST   | `/users`                | Registrazione utente.   |
-| GET    | `/users`                | Lista di tutti gli utenti registrati.                                       |
-| GET    | `/users/{email}`        | Recupero dettagli di un singolo utente.                                     |
-| DELETE | `/users/{email}`        | Cancellazione utente con coordinamento gRPC per rimozione interessi remoti. |
-| GET    | `/users/verify/{email}` | Verifica rapida esistenza utente (restituisce `exists: true/false`).        |
-
-### Data Collector
-
-| Metodo | Endpoint                         | Descrizione                                                                            |
-| ------ | -------------------------------- | -------------------------------------------------------------------------------------- |
-| GET    | `/health`                        | Health check del servizio (include stato scheduler).                                   |
-| POST   | `/interests`                     | Aggiunta di un aeroporto di interesse (verifica esistenza utente via gRPC), è possibile specificare i parametri OPZIONALI (`high_value`, `low_value`)|
-| GET    | `/interests/{email}`             | Recupero lista interessi di un utente.                                                 |
-| DELETE | `/interests`                     | Rimozione di un interesse specifico (query params: `email`, `airport_icao`).           |
-| GET    | `/flights/{airport_icao}`                | Lista voli per aeroporto (filtri: `email`, `type`, `start_date`, `end_date`, `limit`). |
-| GET    | `/flights/{airport_icao}/latest`         | Recupero dell'ultimo volo registrato per un dato aeroporto.                            |
-| GET    | `/flights/{airport_icao}/average`        | Calcolo della media giornaliera dei voli (query params: `email`, `days`, `type`).      |
-| GET    | `/flights/{airport_icao}/stats/airlines` | Top 5 compagnie aeree per traffico sull'aeroporto.                                     |
-| POST   | `/collect/manual`                | Trigger manuale per l'esecuzione immediata del job di raccolta dati.                   |
-| GET    | `/scheduler/status`              | Stato dello scheduler (job attivi e prossima esecuzione).                              |
+| Metodo     | Endpoint Esterno        | Descrizione                                                                                                                                                                                      | Parametri / Body                                                                           |
+| ---------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| **POST**   | `/users`                | Registrazione nuovo utente.                                                                                                                                                                      | **Body:** `nome`, `cognome`, `email`, `codice_fiscale`, `iban` (Tutti obbligatori). |
+| **GET**    | `/users`                | Lista di tutti gli utenti registrati.                                                                                                                                                            | -                                                                                          |
+| **GET**    | `/users/{email}`        | Dettagli di un singolo utente.                                                                                                                                                                   | -                                                                                          |
+| **GET**    | `/users/verify/{email}` | Verifica rapida esistenza utente (restituisce `{ "exists": true/false`).                                                                                                                                                              | -                                           |
+| **DELETE** | `/users/{email}`        | Cancellazione utente. Esegue una **Transazione Distribuita**: contatta prima il Data Collector via gRPC per rimuovere gli interessi e, solo in caso di successo, elimina l'utente dal DB locale. | -                                                                                          |
 
 ---
 
-### Setup e Deploy
+### Data Collector
+
+| Metodo     | Endpoint Esterno                 | Descrizione                                                                                                                                                     | Parametri / Body                                                                                           |
+| ---------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **POST**   | `/interests`                     | Aggiunta interesse per un aeroporto. Verifica l'esistenza dell'utente via gRPC prima di salvare. Se è un nuovo aeroporto, triggera una raccolta dati immediata. | **Body:** `email` (req), `airport_icao` (req), `high_value` (opt), `low_value` (opt).               |
+| **GET**    | `/interests/{email}`             | Lista interessi attivi per un utente.                                                                                                                           | -                                                                                                          |
+| **DELETE** | `/interests`                     | Rimozione di un interesse specifico.                                                                                                                            | **Query Params:** `email`, `airport_icao`.                                                                 |
+| **GET**    | `/flights/{icao}`                | Storico voli salvati per un aeroporto.                                                                                                                          | **Query Params:** `email` (req), `type` (departure/arrival), `start_date`, `end_date`, `limit` (max 1000). |
+| **GET**    | `/flights/{icao}/latest`         | Ultimo volo registrato (arrivo o partenza).                                                                                                                     | **Query Params:** `email`, `type` (opt).                                                             |
+| **GET**    | `/flights/{icao}/average`        | Statistiche: media giornaliera dei voli.                                                                                                                        | **Query Params:** `email` (req), `days`, `type`.                                               |
+| **GET**    | `/flights/{icao}/stats/airlines` | Top 5 compagnie aeree per traffico sull'aeroporto.                                                                                                              | **Query Params:** `email` (req).                                                                           |
+| **POST**   | `/collect/manual`                | Trigger manuale per l'esecuzione immediata del job di raccolta dati (threading asincrono).                                                                      | -                                                                                                          |
+| **GET**    | `/scheduler/status`              | Stato dello scheduler interno (job attivi e next run time).                                                                                                     | -                                                                                                          |
+
+---
+
+### Prometheus
+
+Il sistema espone le metriche sulla dashboard di Prometheus.
+
+| Servizio           | Endpoint Esterno (Ingress)      | Descrizione                                                                   |
+| ------------------ | ---------------- | ------------------------------- |
+| **Prometheus UI**  | `https://localhost/prometheus/` | Dashboard di Prometheus per query PromQL.|
+
+> **Nota sulle Configurazioni**: Nel repository sono presenti due file di configurazione per Prometheus.
+> - **`k8s/prometheus-config.yaml`**: Utilizzato nel deployment Kubernetes, sfrutta il **Service Discovery** dinamico per individuare i Pod tramite le API del cluster.
+> - **`prometheus.yml` (Root)**: Utilizzato esclusivamente per l'avvio tramite Docker Compose, basato su una configurazione statica (`static_configs`) per l'ambiente di sviluppo legacy.
+
+---
+
+### Setup e Deploy (sezione utile principalmente per Docker Compose)
 
 **1. Clonare il repository**
 
@@ -154,6 +384,7 @@ cd DSBD_Project
 **2. Configurare l'ambiente**
 
 Creare un file `.env` nella root con le seguenti configurazioni (incluso SMTP per le notifiche):
+**NOTA**: Questo file non è necessario se si vuole eseguire il sistema su k8s ed è stato già creato il file `secrets.yaml` nella cartella `k8s/`. Resta necessario, tuttavia, qualora si volesse testare il sistema tramite Docker Compose.
 
 ```bash
 # Database Configuration
@@ -222,72 +453,36 @@ Per testare rapidamente tutte le funzionalità del sistema, è disponibile una c
 
 1. **Importare la collection**: Aprire Postman e importare il file `postman_collection.json` presente nella root del repository.
 
-2. **Configurare le variabili**: La collection utilizza variabili d'ambiente per gli URL dei servizi e anche per alcune variabili delle API REST implementate, chiaramente è possibile modificarle per avere ulteriori test custom.
+2. **Configurare le variabili**: La collection utilizza variabili d'ambiente per gli URL dei servizi e anche per alcune variabili delle API REST implementate, chiaramente è possibile modificarle per avere ulteriori test custom. Inserire una mail personale per ricevere gli alert di Kafka.
 
 3. **Eseguire i test**: La collection include esempi pre-configurati per tutti gli endpoint, organizzati per servizio.
 
----
+> **Nota Importante per HTTPS**: Poiché stiamo usando certificati self-signed su Kubernetes locale, disabilitare l'opzione **"SSL certificate verification"** nelle impostazioni generali di Postman (`Settings -> General`).
 
-> **⚠️ Nota sul Primo Avvio (Cold Start):**
-> Alla prima esecuzione, Kafka e MySQL potrebbero impiegare circa 20-30 secondi per inizializzare i volumi e i topic interni. Se i container Python si riavviano inizialmente ("restarting"), è un comportamento normale di auto-guarigione. Attendere che Nginx e i servizi siano stabili prima di lanciare richieste tramite Postman.
-
->**⚠️ Nota sulle API di OpenSky Network:**
->Durante lo sviluppo di questa seconda iterazione, sono emerse criticità durante la raccolta dei dati tramite le API di OpenSky Network; in particolare, gli endpoint utilizzati all'interno del file `opensky_client.py`, ossia `GET /flights/departure` e `GET /flights/arrival`, hanno avuto bisogno di un fix sulla finestra temporale dei dati dei voli richiesti. Precisamente, nella precedente iterazione venivano raccolte ogni 12 ore i dati delle ultime 24, mentre adesso la finestra di raccolta è stata ridotta a 12 ore, TUTTAVIA potrebbe essere necessario ridurla anche ad un valore di 6 ore. Sebbene al momento della scrittura di questa nota il problema dovrebbe essersi risolto, viene lasciato il valore di 12 ore per safety del funzionamento del sistema.
-**EDIT del 17/12/2025**: è stata rimessa la finestra di 24 ore in quanto il problema (a detta degli admin di OpenSky Network) dovrebbe essere stato totalmente sistemato.
 ---
 
 ## Struttura del Repository
 
 ```
-DSBD_Project/
+dsbd-project/
 │
-├── alert-notifier-system/      # Consumer per invio notifiche Email
-│   ├── Dockerfile
-│   ├── app.py                  # Kafka Consumer -> SMTP Client (Gmail)
-│   └── requirements.txt
-│
-├── alert-system/               
-│   ├── Dockerfile
-│   ├── app.py                  # Kafka Consumer (Voli) -> Business Logic -> Kafka Producer (Notifiche)
-│   └── requirements.txt
-│
-├── data-collector/             # Microservizio raccolta dati (Esteso)
-│   ├── Dockerfile
-│   ├── app.py                  # API REST Flask [AGGIORNATO]
-│   ├── circuit_breaker.py      # Implementazione pattern Circuit Breaker
-│   ├── database.py             # Configurazione SQLAlchemy
-│   ├── grpc_client.py          # Client gRPC (verso User Manager)
-│   ├── grpc_server.py          # Server gRPC (Ricezione comandi di cancellazione)
-│   ├── models.py               # ORM Models (UserInterest, FlightData)
-│   ├── opensky_client.py       # [AGGIORNATO] Client API OpenSky protetto da Circuit Breaker
-│   ├── requirements.txt
-│   └── scheduler.py            # [AGGIORNATO] Job periodico APScheduler + Kafka Producer
-│
-├── nginx/                      # API Gateway
-│   ├── ssl/                    # Certificati auto-firmati per HTTPS (esempi auto-generati)
-│   │   ├── nginx-selfsigned.crt
-│   │   └── nginx-selfsigned.key
-│   └── nginx.conf              # Configurazione Reverse Proxy e Load Balancing
-│
-├── proto/                      
-│   ├── data_collector_service.proto
-│   └── user_service.proto
-│
-├── user-manager/               # Microservizio gestione utenti
-│   ├── Dockerfile
-│   ├── app.py                  # API REST Flask [AGGIORNATO per leggere l'indirizzo IP del client forwardato dal Gateway]
-│   ├── database.py             # Configurazione SQLAlchemy
-│   ├── grpc_client.py          # Client gRPC (verso Data Collector)
-│   ├── grpc_server.py          # Server gRPC (Verifica Utenti)
-│   ├── models.py               # ORM Models (User, RequestCache per At-Most-Once)
-│   └── requirements.txt
-│
+├── alert-notifier-system/      # Codice sorgente Alert Notifier
+├── alert-system/               # Codice sorgente Alert System
+├── data-collector/             # Codice sorgente Data Collector
+├── k8s/                        # Manifest di Deployment Kubernetes
+├── nginx/                      # API Gateway (per uso tramite Docker Compose)
+├── proto/                      # File .proto per gRPC
+├── user-manager/               # Codice sorgente User Manager
+├── .dockerignore
 ├── .gitignore
-├── docker-compose.yml          
-├── postman_collection.json     # [AGGIORNATO] Suite di test completa per tutti gli endpoint
+├── start.sh, stop.sh, ...      # Scripts per avvio, stop, restart e cancellazione del cluster
+├── docker-compose.yml
+├── postman_collection.json
+├── prometheus.yml              # File di configurazione di Prometheus (per uso tramite Docker Compose)
 ├── README.md                   
-└── RELAZIONE.pdf               
+└── RELAZIONE.pdf 
 ```
+
 ---
 
 ## Licenza

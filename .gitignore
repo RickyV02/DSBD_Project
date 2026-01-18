@@ -24,6 +24,7 @@ htmlcov/
 # Environment
 .env
 .venv
+k8s/secrets.yaml
 
 # IDE
 .vscode/
@@ -38,9 +39,6 @@ Thumbs.db
 
 # Logs
 *.log
-
-# Docker
-.dockerignore
 
 # Database
 *.db
