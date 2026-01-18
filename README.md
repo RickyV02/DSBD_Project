@@ -270,6 +270,7 @@ Successivamente, per creare il cluster, costruire e caricare su kind le immagini
 ### ⚠️ Note sulle Performance e Risorse
 
 L'ambiente Kubernetes locale (Kind) su Docker/WSL può richiedere tempi di avvio rilevanti.
+Si precisa che il tempo di **avvio** riportato di seguito include: sia i minuti necessari all'esecuzione dello script `start.sh` (~2-3 minuti), sia i minuti effettivi impiegati dai Pod per avviarsi.
 
 | Operazione                   | Tempo Stimato     | Nota                                                                                                                                                                                                          |
 | ---------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
