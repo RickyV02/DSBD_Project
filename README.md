@@ -251,7 +251,15 @@ Il progetto include script di automazione per semplificare il ciclo di vita del 
 
 ### Setup e Avvio (Script Automatico)
 
-Per creare il cluster, costruire e caricare su kind le immagini Docker ed applicare i manifest, è sufficiente eseguire lo script `start.sh`.
+Prima di eseguire gli script per la prima volta, è necessario assegnare i permessi di esecuzione a tutti i file `.sh` presenti nella root tramite il comando:
+```bash
+chmod +x *.sh
+```
+
+Successivamente, per creare il cluster, costruire e caricare su kind le immagini Docker ed applicare i manifest, è sufficiente eseguire lo script `start.sh`:
+```bash
+./start.sh
+```
 
 ### Script Helper
 
@@ -356,6 +364,10 @@ Il sistema espone le metriche sulla dashboard di Prometheus.
 | Servizio           | Endpoint Esterno (Ingress)      | Descrizione                                                                   |
 | ------------------ | ---------------- | ------------------------------- |
 | **Prometheus UI**  | `https://localhost/prometheus/` | Dashboard di Prometheus per query PromQL.|
+
+> **Nota sulle Configurazioni**: Nel repository sono presenti due file di configurazione per Prometheus.
+> - **`k8s/prometheus-config.yaml`**: Utilizzato nel deployment Kubernetes, sfrutta il **Service Discovery** dinamico per individuare i Pod tramite le API del cluster.
+> - **`prometheus.yml` (Root)**: Utilizzato esclusivamente per l'avvio tramite Docker Compose, basato su una configurazione statica (`static_configs`) per l'ambiente di sviluppo legacy.
 
 ---
 
